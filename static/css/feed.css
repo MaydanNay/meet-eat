@@ -238,3 +238,37 @@
 
 /* если want — переключатель видимости (класс searching уже используется) */
 .eat-circle.searching .radar-ring { display: block; }
+
+
+
+/* primary bottom call button (fixed center) */
+#callBtn {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18px;
+  z-index: 13000;
+  min-width: 250px;
+  max-width: calc(100% - 32px);
+  width: 250px;
+  height: 56px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  font-weight: 700;
+  font-size: 16px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.16);
+  border: none;
+  cursor: pointer;
+  margin-bottom: 75px;
+}
+
+/* smaller screens */
+@media (max-width: 420px) {
+  #callBtn { width: calc(100% - 28px); left: 50%; transform: translateX(-50%); min-width: 0; height: 52px; }
+}
+
+/* accessible focus */
+#callBtn:focus { outline: 3px solid rgba(43,107,247,0.12); outline-offset: 3px; transform: translateX(-50%) scale(.995); }

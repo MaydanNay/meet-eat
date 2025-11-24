@@ -1,1 +1,20 @@
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+
+
+# GitHub
+git add .
+git commit -m "m"
+git push -u origin main
+
+
+
+
+
+curl -s -X POST "https://api.telegram.org/bot7642738760:AAEZ-8IwR1wNbxvbQyjuo4mTNKGYgJAXy5E/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"url\": \"https://dd6b890c0ce2.ngrok-free.app/telegram/webhook\",
+    \"allowed_updates\": [\"message\",\"callback_query\"],
+    \"secret_token\": \"${WEBHOOK_SECRET}\"
+  }" | jq

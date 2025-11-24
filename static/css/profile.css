@@ -1,6 +1,9 @@
+/* static/css/profile.css */
+
 .profile-card{
   position: relative;
   overflow: visible;
+  margin-top: 25px;
 }
 
 .profile-top{
@@ -37,12 +40,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.profile-info .username {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .profile-info .age{
   font-size: 13px;
   color: var(--muted);
 }
 .profile-info .geo{
-  margin-top: 8px;
   font-size: 13px;
   color: var(--muted);
 }
@@ -80,7 +90,6 @@
 }
 
 .tag{
-  /* padding: 8px 14px; */
   padding: 10px 25px;
   border-radius: 999px;
   font-size: 13px;
@@ -182,7 +191,7 @@
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 99999;                /* поверх всего */
+  z-index: 99999;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -267,4 +276,145 @@
 .modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:14px; }
 .btn { padding:8px 12px; border-radius:10px; cursor:pointer; border: none; }
 .btn.outline { background:transparent; border:1px solid rgba(0,0,0,0.08); }
-.btn.primary { background:#1976d2; color:#fff; }
+.btn.primary { background:#eb4c37; color:#fff; }
+
+
+
+
+
+.person-card:focus { outline: 2px solid rgba(43,107,247,0.18); outline-offset: 3px; }
+
+.modal-window { position:relative; background:#fff; padding:16px; border-radius:8px; z-index:9999; width:320px; max-width:90%; }
+
+
+
+/* ===== Reviews: big emoji + single horizontal row ===== */
+.reactions-wrap {
+  display: flex;
+  gap: 12px;
+  flex-wrap: nowrap;              /* все элементы в одну линию */
+  overflow-x: auto;               /* горизонтальная прокрутка при переполнении */
+  -webkit-overflow-scrolling: touch;
+  align-items: flex-start;        /* чтобы подписи под эмодзи выровнялись корректно */
+  padding: 6px 4px;
+}
+
+/* каждый отзыв: эмодзи сверху, подпись снизу */
+.reaction-item {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 90px;
+  max-width: 107px;
+  height: 110px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid rgba(0,0,0,0.04);
+  box-shadow: var(--shadow);
+  text-align: center;
+  cursor: pointer;
+}
+
+/* эмодзи крупнее и центрированно */
+.reaction-emoji {
+  font-size: 37px;
+  line-height: 1;
+  display: block;
+  margin-bottom: 8px;
+  width: 100%;
+  text-align: center;
+}
+
+/* label inline: browser may break only between first and rest */
+.reaction-label {
+  display: inline-block;
+  max-width: 100%;
+  text-align: center;
+  vertical-align: top;
+  white-space: normal;
+  margin-bottom: 5px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* не ломать слова внутри спанов */
+.reaction-first,
+.reaction-rest {
+  display: inline;            /* keep inline so they can sit on same line */
+  white-space: nowrap;        /* prevent internal wrapping */
+}
+
+/* визуальная настройка (по желанию) */
+.reaction-first { font-weight: 600; color: var(--text); font-size: 13px; }
+.reaction-rest  { color: var(--muted); font-size: 13px; }
+
+/* фокус-стиль для клавиатурной доступности */
+.reaction-item:focus {
+  outline: 2px solid rgba(43,107,247,0.18);
+  outline-offset: 3px;
+}
+
+/* адаптив: на очень узких экранах - уменьшить эмодзи и ширину карточек */
+@media (max-width: 380px) {
+  .reaction-emoji { font-size: 28px; }
+  .reaction-item { min-width: 76px; max-width: 90px; padding: 6px 8px; }
+  .reaction-label { font-size: 12px; }
+}
+
+
+/* --- floating circular back button (top-left) --- */
+#floatingBackBtn {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card, #fff);
+  color: var(--text);
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+  z-index: 12000;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+  padding: 0;
+}
+#floatingBackBtn svg { display:block; pointer-events: none; color: var(--text); }
+#floatingBackBtn:active { transform: translateY(1px) scale(.98); }
+#floatingBackBtn:focus { outline: 3px solid rgba(43,107,247,0.14); outline-offset: 2px; }
+
+/* смещение на маленьких экранах (если нужно) */
+@media (max-width: 360px) {
+  #floatingBackBtn { left: 8px; top: 8px; width: 40px; height: 40px; }
+}
+
+/* --- make full emoji label highlight (both spans) --- */
+/* убираем разницу стилей между первым словом и остальными;
+   подсветка при hover/focus будет окрашивать всю подпись */
+.reaction-first,
+.reaction-rest {
+  display: inline;
+  white-space: nowrap;
+  font-weight: 600;          /* теперь весь label выделён одинаково */
+  color: var(--text);
+}
+
+/* более заметная подсветка при Hover/Focus на карточке */
+.reaction-item:hover .reaction-first,
+.reaction-item:hover .reaction-rest,
+.reaction-item:focus .reaction-first,
+.reaction-item:focus .reaction-rest {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.reaction-item.compact.selected {
+  background: #fff8e3;
+  border-color: #eb4c37;
+}

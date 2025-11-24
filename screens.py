@@ -3,8 +3,8 @@
 import os
 from fastapi import HTTPException
 
-# белый список экранов — контролируем, какие шаблоны можно рендерить
-ALLOWED_SCREENS = {"home", "feed", "map", "chat", "profile", "profile_edit"}
+# белый список экранов - контролируем, какие шаблоны можно рендерить
+ALLOWED_SCREENS = {"home", "feed", "map", "chat", "profile", "profile_edit", "user_profile_view"}
 
 def safe_screen_template(name: str, SCREENS_TEMPLATES_DIR) -> str:
     if name not in ALLOWED_SCREENS:

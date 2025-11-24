@@ -5,45 +5,41 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Meet & Eat</title>
+    <title>LunchFlow</title>
     <link rel="stylesheet" href="/static/css/basic.css">
     <link rel="stylesheet" href="/static/css/home.css">
     <link rel="stylesheet" href="/static/css/nav.css">
     <link rel="stylesheet" href="/static/css/feed.css">
     <link rel="stylesheet" href="/static/css/profile.css">
     <link rel="stylesheet" href="/static/css/dev.css">
+    <link rel="stylesheet" href="/static/css/places.css">
     
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="/static/hero.js" defer></script>
-    <script src="/static/client.js" defer></script>
+    <script type="module" src="/static/places.js" defer></script>
+    <script type="module" src="/static/client.js" defer></script>
 </head>
 <body>
     <div class = "mobile-container">
-        <!-- <header class="topbar"><h1>Meet & Eat</h1></header> -->
-
         <nav id="menu" class="menu">
-        <button data-screen="home">
-            <img src="/static/images/home.svg" alt="home"/>
-        </button>
-        <button data-screen="chat">
-            <img src="/static/images/chat.svg" alt="chat"/>
-        </button>
-        <button data-screen="feed">
-            <img src="/static/images/feed.svg" alt="feed"/>
-        </button>
-        <button data-screen="map">
-            <img src="/static/images/map.svg" alt="map"/>
-        </button>
-        <button data-screen="profile">
-            <img src="/static/images/profile.svg" alt="profile"/>
-        </button>
+            <button data-screen="home">
+                <img src="/static/images/home.svg" alt="home"/>
+            </button>
+            <button data-screen="chat">
+                <img src="/static/images/chat.svg" alt="chat"/>
+            </button>
+            <button data-screen="feed">
+                <img src="/static/images/feed.svg" alt="feed"/>
+            </button>
+            <button data-screen="map">
+                <img src="/static/images/map.svg" alt="map"/>
+            </button>
+            <button data-screen="profile">
+                <img src="/static/images/profile.svg" alt="profile"/>
+            </button>
         </nav>
 
         <main id="app" class="app"></main>
-
-        <!-- <footer class="bottom">
-            <div id="timer" class="timer" style="display:none;"></div>
-        </footer> -->
     </div>
 </body>
 </html>

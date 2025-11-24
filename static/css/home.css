@@ -86,7 +86,7 @@ p.soon-text {
 
 .place-card img{
   width: 44%;
-  height:100%;
+  height: 100%;
   object-fit:cover;
   border-radius: 12px;
   margin-left: 10px;
@@ -125,9 +125,9 @@ p.soon-text {
 
 .interest-card{
   flex: 0 0 46%;
-  /* min-width: 160px; */
+  min-width: 200px;
   background: var(--card);
-  border-radius: 25px;
+  border-radius: 12px;
   padding: 10px;
   display:flex;
   gap:12px;
@@ -174,10 +174,9 @@ p.soon-text {
   box-shadow: inset 0 -2px 0 rgba(0,0,0,0.02);
 }
 
-.big{ font-size:16px; padding:12px 18px; border-radius:12px; }
+.big { font-size:16px; padding:12px 18px; border-radius:12px; }
 .muted{ 
   opacity:0.7;
-  margin: 15px 4px;
   padding: 0px;
 }
 

@@ -55,6 +55,78 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_user_tags_tag 
                 ON user_tags(tag);
         """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,            -- например "invite_response"
+                payload TEXT,                  -- json string с деталями
+                read INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS invites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_user_id INTEGER NOT NULL,
+                to_user_id INTEGER NOT NULL,
+                time_iso TEXT,
+                meal_type TEXT,
+                place_id INTEGER,
+                place_name TEXT,
+                message TEXT,
+                status TEXT DEFAULT 'pending',
+                responder_user_id INTEGER,
+                responded_at TEXT,
+
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY(from_user_id) REFERENCES users(id),
+                FOREIGN KEY(to_user_id) REFERENCES users(id)
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_invites_to 
+                ON invites(to_user_id);
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reviewer_id INTEGER NOT NULL,
+                target_user_id INTEGER NOT NULL,
+                reaction TEXT NOT NULL,
+                comment TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY(reviewer_id) REFERENCES users(id),
+                FOREIGN KEY(target_user_id) REFERENCES users(id),
+                UNIQUE(reviewer_id, target_user_id, reaction)
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reviews_target 
+                ON reviews(target_user_id);
+        """)
+
+        # places (заведения)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS places (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                category TEXT,
+                rating REAL DEFAULT 0.0,
+                open_time TEXT,   -- формат "HH:MM"
+                close_time TEXT,  -- формат "HH:MM"
+                address TEXT,
+                photo TEXT,       -- url к картинке
+                created_by_tg_id INTEGER,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_places_category ON places(category);
+        """)
+
         await db.commit()
 
         try:
@@ -69,8 +141,7 @@ async def cleanup_task(stop_event: asyncio.Event):
             try:
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute(
-                        "UPDATE eat_sessions SET active = 0 WHERE expires_at <= ? AND active = 1",
-                        (now_iso(),)
+                        "UPDATE eat_sessions SET active = 0 WHERE expires_at <= datetime('now') AND active = 1"
                     )
                     await db.commit()
             except Exception as e:
