@@ -1,2 +1,9 @@
 jinja2
 fastapi
+fastapi
+uvicorn
+aiosqlite
+aiohttp
+python-dotenv
+typer
+httpx
