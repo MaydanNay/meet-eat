@@ -122,7 +122,7 @@ async def edit_message_text(chat_id: int = None, message_id: int = None, inline_
         logging.exception("editMessageText failed")
 
 
-# helper — формирует телеграм inline keyboard (Yes/No)
+# helper - формирует телеграм inline keyboard (Yes/No)
 # def telegram_survey_keyboard(invite_id):
 #     return {
 #         "inline_keyboard": [

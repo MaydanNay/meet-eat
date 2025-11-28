@@ -165,7 +165,7 @@ async def cleanup_task(stop_event: asyncio.Event):
                 logger = logging.getLogger("root")
                 logger.exception("cleanup_task: db update failed: %s", e)
 
-            # ждём либо событие стопа, либо таймаут — но таймаут не должен завершать таск с ошибкой
+            # ждём либо событие стопа, либо таймаут - но таймаут не должен завершать таск с ошибкой
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=60.0)
             except asyncio.TimeoutError:
@@ -192,7 +192,7 @@ async def lifespan(app: FastAPI):
     # один cleanup таск
     cleanup_t = asyncio.create_task(cleanup_task(stop_event))
 
-    # стартуем survey worker; если survey_dispatcher_loop требует args — передайте их
+    # стартуем survey worker; если survey_dispatcher_loop требует args - передайте их
     survey_task = asyncio.create_task(survey_dispatcher_loop())
 
     app.state._survey_task = survey_task

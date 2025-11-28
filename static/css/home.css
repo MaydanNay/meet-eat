@@ -176,8 +176,9 @@ p.soon-text {
 
 .big { font-size:16px; padding:12px 18px; border-radius:12px; }
 .muted{ 
+  font-size: 15px;
   opacity:0.7;
-  padding: 0px;
+  padding: 0px 5px;
 }
 
 .bottom-space{

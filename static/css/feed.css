@@ -172,7 +172,7 @@
   to { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
-/* состояние активной сессии — держим пульсацию */
+/* состояние активной сессии - держим пульсацию */
 .eat-circle.active {
   animation: eat-pulse 1.2s ease-in-out infinite;
   box-shadow: 0 14px 36px rgba(235,76,55,0.22);
@@ -240,7 +240,7 @@
   }
 }
 
-/* если want — переключатель видимости (класс searching уже используется) */
+/* если want - переключатель видимости (класс searching уже используется) */
 .eat-circle.searching .radar-ring { display: block; }
 
 

@@ -106,3 +106,161 @@ body.modal-open { overflow: hidden; touch-action: none; }
   .modal-card, .modal-content, .modal-window { padding:12px; border-radius:10px; }
   .modal-actions { gap:8px; }
 }
+
+
+/* Invite modal — input styling matching main design */
+.modal-window.invite-modal {
+  width: 480px;
+  max-width: calc(100% - 36px);
+  padding: 18px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--card), #fbfbfb);
+  box-shadow: 0 20px 44px rgba(15,12,10,0.08);
+  color: var(--text);
+}
+
+/* general row / field wrapper */
+.invite-modal .invite-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.invite-modal .invite-row.full { flex-direction: column; align-items: stretch; }
+
+/* label small helper */
+.invite-modal label {
+  display:block;
+  font-size:13px;
+  font-weight:700;
+  color:var(--text);
+  margin-bottom:6px;
+}
+
+/* unified input style */
+.invite-modal .invite-field,
+.invite-modal input[type="datetime-local"],
+.invite-modal input[type="text"],
+.invite-modal select,
+.invite-modal textarea {
+  width:100%;
+  background: #fff;
+  border: 1px solid rgba(15,12,10,0.06);
+  padding: 10px 14px;
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(12,10,8,0.03);
+  font-size:14px;
+  color: var(--text);
+  transition: box-shadow .14s ease, border-color .12s ease, transform .08s ease;
+  outline: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+/* subtle inner accent on focus */
+.invite-modal input:focus,
+.invite-modal select:focus,
+.invite-modal textarea:focus,
+.invite-modal .invite-field:focus {
+  border-color: rgba(235,76,55,0.22);
+  box-shadow: 0 10px 30px rgba(235,76,55,0.06);
+}
+
+/* datetime-specific tuning — keep native control but prettier container */
+.invite-modal input[type="datetime-local"] {
+  padding-right: 40px;
+  position: relative;
+  line-height: 1.3;
+}
+
+/* custom caret for select (simple CSS caret using gradient) */
+.invite-modal select {
+  padding-right: 40px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%),
+    linear-gradient(to right, rgba(0,0,0,0.02), rgba(0,0,0,0.02));
+  background-position:
+    calc(100% - 18px) calc(50% - 6px),
+    calc(100% - 12px) calc(50% - 6px),
+    calc(100% - 36px) 50%;
+  background-size: 8px 8px, 8px 8px, 1px 36px;
+  background-repeat: no-repeat;
+}
+
+/* textarea: larger, resizable vertically */
+.invite-modal textarea {
+  min-height: 90px;
+  max-height: 240px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+/* pill-style radio options for meal choices */
+.invite-modal .meal-options {
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.invite-modal .meal-options input[type="radio"] { display:none; }
+.invite-modal .meal-options label {
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 12px;
+  border-radius: 999px;
+  cursor:pointer;
+  font-size:13px;
+  font-weight:600;
+  color: var(--muted);
+  background: linear-gradient(180deg, rgba(0,0,0,0.02), transparent);
+  border: 1px solid rgba(0,0,0,0.04);
+  transition: transform .08s ease, box-shadow .12s ease, color .12s ease, background .12s ease;
+}
+.invite-modal .meal-options label:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
+.invite-modal .meal-options input[type="radio"]:checked + label,
+.invite-modal .meal-options label.checked {
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent), #d43b2a);
+  box-shadow: 0 8px 26px rgba(235,76,55,0.12);
+  border-color: rgba(235,76,55,0.18);
+}
+
+/* helper / hint text below input */
+.invite-modal .field-hint {
+  font-size:12px;
+  color:var(--muted);
+  margin-top:6px;
+}
+
+/* error state */
+.invite-modal .has-error input,
+.invite-modal .has-error textarea,
+.invite-modal .has-error select,
+.invite-modal .has-error .invite-field {
+  border-color: rgba(220,38,38,0.28);
+  box-shadow: 0 6px 18px rgba(220,38,38,0.05);
+}
+.invite-modal .error-text { color:#c0392b; font-size:12px; margin-top:6px; }
+
+/* actions: align and visual weight */
+.invite-modal .modal-actions { margin-top: 14px; display:flex; gap:10px; justify-content:flex-end; }
+.invite-modal .modal-actions .btn { padding:10px 14px; border-radius:10px; font-weight:700; }
+.invite-modal .modal-actions .btn.primary { min-width:110px; }
+
+/* small screens adjustments */
+@media (max-width:520px) {
+  .modal-window.invite-modal { width: calc(100% - 36px); padding:14px; border-radius:12px; }
+  .invite-modal .invite-row { flex-direction: column; align-items: stretch; }
+  .invite-modal .meal-options label { padding:8px 10px; font-size:13px; }
+}
+
+/* accessibility: keyboard focus visible outlines */
+.invite-modal .meal-options label:focus,
+.invite-modal input:focus,
+.invite-modal select:focus,
+.invite-modal textarea:focus {
+  outline: 3px solid rgba(43,107,247,0.10);
+  outline-offset: 3px;
+}

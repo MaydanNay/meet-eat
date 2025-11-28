@@ -66,7 +66,7 @@ async function openInviteModal(toTgId) {
 
         <label for="invitePlace" style="display:block;margin-bottom:6px;font-weight:600">Место</label>
         <select id="invitePlace" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);margin-bottom:12px;">
-          <option value="">— Не указано —</option>
+          <option value="">- Не указано -</option>
         </select>
 
         <label for="inviteMessage" style="display:block;margin-bottom:6px;font-weight:600">Сообщение (необязательно)</label>
@@ -102,7 +102,7 @@ async function openInviteModal(toTgId) {
                 const opt = document.createElement("option");
                 opt.value = p.id !== undefined ? String(p.id) : "";
                 opt.dataset.name = p.name || "";
-                opt.textContent = `${p.name || 'Без названия'}${p.category ? ' — ' + p.category : ''}`;
+                opt.textContent = `${p.name || 'Без названия'}${p.category ? ' - ' + p.category : ''}`;
                 placeSelect.appendChild(opt);
             });
         } catch (e) {
@@ -272,8 +272,8 @@ async function pollIncomingInvitesOnce() {
   _invitePollRunning = true;
   try {
     const tg = getTgId();
-    if (!tg) return; // не авторизован — нет смысла
-    // если вкладка невидима — не опрашиваем (экономия)
+    if (!tg) return; // не авторизован - нет смысла
+    // если вкладка невидима - не опрашиваем (экономия)
     if (typeof document !== "undefined" && document.hidden) return;
 
     const invites = await fetchIncomingInvites();
@@ -319,16 +319,16 @@ function stopInvitePoll() {
 // уменьшение частоты при скрытой вкладке / возобновление при видимости
 // document.addEventListener("visibilitychange", () => {
 //   if (document.hidden) {
-//     // при переходе в фон — можно приостановить таймер
+//     // при переходе в фон - можно приостановить таймер
 //     stopInvitePoll();
 //   } else {
-//     // при возврате — сразу опросить и рестартовать таймер
+//     // при возврате - сразу опросить и рестартовать таймер
 //     startInvitePoll();
 //   }
 // });
 document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-        // при возвращении во вкладку — пробуем подтянуть текущую позицию и пересоздать update loop
+        // при возвращении во вкладку - пробуем подтянуть текущую позицию и пересоздать update loop
         const tg = localStorage.getItem("meeteat_tg_id") || getTgId();
         if (tg) {
             navigator.geolocation.getCurrentPosition(pos => {
@@ -340,7 +340,7 @@ document.addEventListener("visibilitychange", () => {
             startUpdateLoop(Number(tg));
         }
     } else {
-        // вкладка в фоне — можно остановить быстрые обновления, но оставим серверную сессию жить 1 час
+        // вкладка в фоне - можно остановить быстрые обновления, но оставим серверную сессию жить 1 час
         // stopUpdateLoop(); // не обязательно
     }
 });
@@ -1282,7 +1282,7 @@ function openNotificationModal(notif) {
                 alert("Ошибка");
                 return;
             }
-            alert("Спасибо — отзыв сохранён");
+            alert("Спасибо - отзыв сохранён");
             modal.remove();
             } catch (e) {
             console.error(e);
@@ -1296,7 +1296,7 @@ function openNotificationModal(notif) {
 
     // survey_negative
     if (notif.type === "survey_negative") {
-        const msg = (notif.payload && notif.payload.message) || "Ничего страшного — найдете другого.";
+        const msg = (notif.payload && notif.payload.message) || "Ничего страшного - найдете другого.";
         modal.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-window"><h3>Опрос</h3><div class="muted">${escapeHtml(msg)}</div><div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn" id="${id}_close">Закрыть</button></div></div>
@@ -1527,7 +1527,7 @@ function ensureBaseModals() {
       const val = input && input.value.trim();
       if (!val) return input.focus();
       const normalized = String(val).toLowerCase().replace(/\s+/g, ' ').slice(0,64);
-      // если такой уже есть — пометить/выделить
+      // если такой уже есть - пометить/выделить
       const existing = Array.from($qs("#tagModalList").querySelectorAll(".tag")).find(n => (n.dataset.value||"") === normalized);
       if (existing) {
         existing.classList.add("selected");
@@ -1573,7 +1573,7 @@ function ensureBaseModals() {
   }
 }
 
-// Открывает review modal (универсальный): targetTg — tg_id цели, partnerName — имя, partnerAvatar — url
+// Открывает review modal (универсальный): targetTg - tg_id цели, partnerName - имя, partnerAvatar - url
 async function openReviewModal(targetTg, partnerName = "Пользователь", partnerAvatar = "/static/images/default_avatar.svg", reactionsList = reactions) {
   ensureBaseModals();
   const m = $qs("#reviewModal");
@@ -1610,7 +1610,7 @@ async function openReviewModal(targetTg, partnerName = "Пользователь
       sendBtn.disabled = true;
       const resp = await postJson("/api/review/toggle", { reviewer_tg_id: tg, target_tg_id: targetTg, reaction: selected });
       if (!resp || !resp.ok) throw new Error((resp && resp.error) ? resp.error : "server error");
-      alert("Спасибо — отзыв сохранён");
+      alert("Спасибо - отзыв сохранён");
       const modal = $qs("#reviewModal");
       if (modal) { modal.classList.add("hidden"); modal.setAttribute("aria-hidden","true"); }
     } catch (e) {

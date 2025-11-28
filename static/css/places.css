@@ -157,7 +157,7 @@ button:focus, input:focus { outline: 3px solid rgba(235,76,55,0.12); outline-off
 @media (max-width:460px){
   /* держим карточку в строке, но уменьшаем размеры и межэлем. отступы */
   .place-card {
-    flex-direction: row;       /* НЕ столбец — картинка остаётся справа */
+    flex-direction: row;       /* НЕ столбец - картинка остаётся справа */
     align-items: center;
     gap: 8px;
     padding: 10px;
@@ -175,7 +175,7 @@ button:focus, input:focus { outline: 3px solid rgba(235,76,55,0.12); outline-off
     margin-left: auto;        /* чтобы картинка "прилипала" к правому краю */
   }
 
-  /* заголовок — допускаем перенос на две строки */
+  /* заголовок - допускаем перенос на две строки */
   .place-info h5 {
     white-space: normal;
     display: -webkit-box;
@@ -184,7 +184,7 @@ button:focus, input:focus { outline: 3px solid rgba(235,76,55,0.12); outline-off
     overflow: hidden;
   }
 
-  /* если используете горизонтальную карусель — немного уменьшаем ширину карточки */
+  /* если используете горизонтальную карусель - немного уменьшаем ширину карточки */
   .place-card { flex: 0 0 280px; min-width: 220px; }
 }
 
@@ -290,12 +290,12 @@ button:focus, input:focus { outline: 3px solid rgba(235,76,55,0.12); outline-off
   transition: transform .12s ease, box-shadow .12s ease;
 }
 
-/* hover/focus — небольшой подъём */
+/* hover/focus - небольшой подъём */
 .place-card:hover, .place-card:focus-within {
   transform: translateY(-4px);
 }
 
-/* картинка — подгоняем под вертикальный размер карточки */
+/* картинка - подгоняем под вертикальный размер карточки */
 .place-card img {
   width: 170px;
   height: 100%;

@@ -281,7 +281,7 @@ async def api_survey_respond(request: Request):
             # optional: send Telegram with reaction buttons (callback_data: review:<invite_id>:<reaction>)
             if partner_tg:
                 try:
-                    # Для Telegram — отправляем пользователю который ответил (not partner)
+                    # Для Telegram - отправляем пользователю который ответил (not partner)
                     # kb = {"inline_keyboard": [[{"text": r, "callback_data": f"review:{invite_id}:{r}"}] for r in ALLOWED_REACTIONS]}
                     # await send_telegram_message(tg_id, payload["prompt"], reply_markup=kb)
                     await send_telegram_message(tg_id, payload["prompt"])
@@ -290,7 +290,7 @@ async def api_survey_respond(request: Request):
             return {"ok": True, "action": "ask_review"}
         else:
             # answer == 'no'
-            payload = {"message": f'Ничего страшного — найдете другого.'}
+            payload = {"message": f'Ничего страшного - найдете другого.'}
             await db.execute("INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
                              (user_id, "survey_negative", json.dumps(payload, ensure_ascii=False)))
             await db.commit()
@@ -472,7 +472,7 @@ async def api_invite(request: Request):
         place_text = f' в "{body.get("place_name")}"' if body.get("place_name") else ""
         meal = body.get("meal_type") or "встречу"
 
-        # форматируем время — если есть, парсим ISO и переводим в Asia/Almaty
+        # форматируем время - если есть, парсим ISO и переводим в Asia/Almaty
         time_readable = ""
         raw_time = body.get("time_iso")
         if raw_time:
@@ -487,7 +487,7 @@ async def api_invite(request: Request):
                 except Exception:
                     dt = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S.%fZ")
 
-                # если dt naive — считаем что это UTC
+                # если dt naive - считаем что это UTC
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
 
@@ -507,10 +507,10 @@ async def api_invite(request: Request):
             except Exception:
                 logging.exception("time parse failed")
 
-        # сформируем текст: если есть время — вставим отформатированное, иначе опустим
+        # сформируем текст: если есть время - вставим отформатированное, иначе опустим
         when_part = (f"в {time_readable}" if time_readable else (f"в {body.get('time_iso')}" if body.get('time_iso') else ""))
         
-        # сообщение — добавляем только если есть и не пустое
+        # сообщение - добавляем только если есть и не пустое
         msg = body.get("message")
         if msg:
             text = f"У вас новое приглашение{place_text} от {from_display} на {meal} {when_part}.\n\nСообщение от пригласившего: {msg}\n\nЗайдите в наш мини-апп, чтобы ответить на приглашение"
@@ -623,7 +623,7 @@ async def handle_survey_response(invite_id: int, responder_tg: int, ans: str):
                 logging.exception("telegram send followup failed")
             return {"ok": True, "action": "ask_review"}
         else:
-            payload = {"message": f'Ничего страшного — найдете другого.'}
+            payload = {"message": f'Ничего страшного - найдете другого.'}
             await db.execute("INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
                              (user_id, "survey_negative", json.dumps(payload, ensure_ascii=False)))
             await db.commit()
@@ -1262,13 +1262,13 @@ async def telegram_webhook(request: Request):
                 iid = int(sid)
                 res = await handle_review_from_survey(iid, tg_user_id, reaction)
                 if res.get("ok"):
-                    await answer_callback_query(cq_id, "Отзыв сохранён — спасибо!", show_alert=False)
+                    await answer_callback_query(cq_id, "Отзыв сохранён - спасибо!", show_alert=False)
                 else:
                     await answer_callback_query(cq_id, res.get("error","Ошибка"), show_alert=True)
                 return {"ok": True}
             
             if res.get("ok"):
-                await answer_callback_query(cq_id, "Отзыв сохранён — спасибо!", show_alert=False)
+                await answer_callback_query(cq_id, "Отзыв сохранён - спасибо!", show_alert=False)
                 try:
                     msg = cq.get("message")
                     if msg and "chat" in msg and "message_id" in msg:

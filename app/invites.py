@@ -29,7 +29,7 @@ async def handle_invite_response(invite_id: int, responder_tg: int, action: str)
         except Exception:
             stored_to_tg = None
 
-        # Если в БД нет to_tg или он не совпадает с приславшим запрос — отказ
+        # Если в БД нет to_tg или он не совпадает с приславшим запрос - отказ
         try:
             if stored_to_tg is None or int(stored_to_tg) != int(responder_tg):
                 return {"ok": False, "error": "not authorized"}
@@ -102,7 +102,7 @@ async def handle_invite_response(invite_id: int, responder_tg: int, action: str)
 
         when_part = f"в {time_readable}" if time_readable else (f"в {inv['time_iso']}" if inv["time_iso"] else "")
 
-        # При принятии добавляем отдельную строку с username (если есть) — как просил
+        # При принятии добавляем отдельную строку с username (если есть) - как просил
         contact_line = ""
         if new_status == "accepted":
             if responder_username:
