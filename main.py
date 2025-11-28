@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
 
 from routes import router as api_router
+from routes import survey_dispatcher_loop
+
 
 DB_PATH = "db.sqlite3"
 
@@ -79,7 +81,7 @@ async def init_db():
                 status TEXT DEFAULT 'pending',
                 responder_user_id INTEGER,
                 responded_at TEXT,
-
+                survey_sent INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now')),
                 FOREIGN KEY(from_user_id) REFERENCES users(id),
@@ -90,6 +92,16 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_invites_to 
                 ON invites(to_user_id);
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS invite_surveys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invite_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                answer TEXT NOT NULL,
+                created_at DATETIME DEFAULT (datetime('now'))
+            );
+        """)
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS reviews (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,14 +168,25 @@ async def cleanup_task(stop_event: asyncio.Event):
 async def lifespan(app: FastAPI):
     await init_db()
     stop_event = asyncio.Event()
+
+    cleanup_t = asyncio.create_task(cleanup_task(stop_event))
+    # start survey worker here to make it unambiguous and single-process
+    survey_task = asyncio.create_task(survey_dispatcher_loop())
+    app.state._survey_task = survey_task
+
     task = asyncio.create_task(cleanup_task(stop_event))
     try:
         yield
     finally:
         stop_event.set()
-        task.cancel()
+        cleanup_t.cancel()
+        survey_task.cancel()
         try:
-            await task
+            await cleanup_t
+        except Exception:
+            pass
+        try:
+            await survey_task
         except Exception:
             pass
 

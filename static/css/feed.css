@@ -41,6 +41,10 @@
   font-size: 15px;
   font-weight: 700;
 }
+.nearby-count--spaced {
+  margin: 15px 0;
+}
+
 
 .nearby-cards {
   display: flex;

@@ -292,7 +292,6 @@ async function pollIncomingInvitesOnce() {
       openIncomingInviteModal(newInv[0]);
     } else {
       for (const inv of newInv) {
-        // даём небольшой интервал, чтобы модалки не напрыгивали
         setTimeout(() => openIncomingInviteModal(inv), 200);
       }
     }
@@ -318,15 +317,34 @@ function stopInvitePoll() {
 }
 
 // уменьшение частоты при скрытой вкладке / возобновление при видимости
+// document.addEventListener("visibilitychange", () => {
+//   if (document.hidden) {
+//     // при переходе в фон — можно приостановить таймер
+//     stopInvitePoll();
+//   } else {
+//     // при возврате — сразу опросить и рестартовать таймер
+//     startInvitePoll();
+//   }
+// });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    // при переходе в фон — можно приостановить таймер
-    stopInvitePoll();
-  } else {
-    // при возврате — сразу опросить и рестартовать таймер
-    startInvitePoll();
-  }
+    if (!document.hidden) {
+        // при возвращении во вкладку — пробуем подтянуть текущую позицию и пересоздать update loop
+        const tg = localStorage.getItem("meeteat_tg_id") || getTgId();
+        if (tg) {
+            navigator.geolocation.getCurrentPosition(pos => {
+                try {
+                    postJson("/start", { tg_id: Number(tg), lat: pos.coords.latitude, lon: pos.coords.longitude });
+                    fetchNearbyAndRender(Number(tg), pos.coords.latitude, pos.coords.longitude);
+                } catch(e){ console.warn("vischg update failed", e); }
+            }, err => { console.warn("vischg geo failed", err); }, { enableHighAccuracy: true, maximumAge: 10000 });
+            startUpdateLoop(Number(tg));
+        }
+    } else {
+        // вкладка в фоне — можно остановить быстрые обновления, но оставим серверную сессию жить 1 час
+        // stopUpdateLoop(); // не обязательно
+    }
 });
+
 
 
 
@@ -379,7 +397,7 @@ function renderInterestCard(u) {
         <img class="avatar" src="${avatarSrc}" alt="${u.name || u.username || 'user'}"/>
         <div class="info">
             <div class="name">${escapeHtml(u.name || (u.username ? '@' + u.username : 'Пользователь'))}</div>
-            <div class="age">${u.age ? (u.age + " лет") : ""}${u.common ? " · " + u.common + " совпад." : ""}</div>
+            <div class="age">${u.age ? (u.age + " лет") : ""}${(u.common ? (" · " + u.common + " совпад.") : "")}</div>
         </div>
         <div class="tags">${tagsHtml}</div>
     `;
@@ -410,7 +428,6 @@ async function fetchSimilarAndRender() {
     if (placeholder) placeholder.textContent = "Загрузка похожих пользователей…";
     const tg_id = getTgId();
     if (!tg_id) {
-        // если не авторизован - показать подсказку
         if (placeholder) placeholder.textContent = "Войдите через Telegram, чтобы видеть людей с похожими интересами.";
         return;
     }
@@ -484,6 +501,7 @@ async function openTagModal(existingTags = [], user = null) {
     const existingNorm = Array.from(selected); // массив уникальных выбранных
     // Берём популярные теги из DEFAULT_TAGS (без запроса к бэку)
     const availNorm = DEFAULT_TAGS.map(t => String(t).toLowerCase().trim()).filter(Boolean);
+    
     // helper для создания кнопки тега
     const createTagButton = (t) => {
         const btn = document.createElement("button");
@@ -503,6 +521,7 @@ async function openTagModal(existingTags = [], user = null) {
         });
         return btn;
     };
+
     // 1) отрисуем популярные теги в первой секции
     const popularWrap = document.createElement("div");
     popularWrap.className = "tag-section popular";
@@ -514,6 +533,7 @@ async function openTagModal(existingTags = [], user = null) {
         popularWrap.appendChild(createTagButton(t));
     }
     list.appendChild(popularWrap);
+
     // 2) отрисуем дополнительные пользовательские теги, которых нет в популярных
     const extras = existingNorm.filter(t => !availNorm.includes(t));
     if (extras.length) {
@@ -574,7 +594,7 @@ async function openTagModal(existingTags = [], user = null) {
             const resp = await postJson("/api/profile/tags", { tg_id, tags: picked });
             if (!resp || !resp.ok) throw new Error("save failed");
             closeAndCleanup();
-            runScreenInit("profile"); // обновим профиль
+            runScreenInit("profile");
         } catch (err) {
             console.error("save tags failed", err);
             alert("Ошибка сохранения: " + (err.message || err));
@@ -623,7 +643,6 @@ function openUserProfilePage(tg_id) {
     } catch (e) {
         console.warn("sessionStorage set failed", e);
     }
-    // loadScreen уже делает history.pushState и runScreenInit
     loadScreen("user_profile_view");
 }
 
@@ -752,6 +771,7 @@ const screenInits = {
             if (nameEl) nameEl.textContent = u.name || u.username || "Пользователь";
             if (usernameEl) usernameEl.textContent = u.username ? `@${u.username}` : "";
             if (ageEl) ageEl.textContent = u.age ? `${u.age} лет` : "";
+            
             // tags
             const tags = res.tags || [];
             if (tagsPanel) {
@@ -780,25 +800,37 @@ const screenInits = {
                 });
                 tagsPanel.appendChild(add);
             }
+
             try {
                 // удалим старый блок если он есть
+                const oldMatch = $qs("#profileMatchCount");
+                if (oldMatch) oldMatch.remove();
+                const oldInterestsTitle = $qs("#profileInterestsTitle");
+                if (oldInterestsTitle) oldInterestsTitle.remove();
+                const oldReviewsTitle = $qs("#profileReviewsTitle");
+                if (oldReviewsTitle) oldReviewsTitle.remove();
                 const prev = $qs("#profileReviewsSummary");
                 if (prev) prev.remove();
 
+
                 // заголовок для интересов
                 const interestsTitle = document.createElement("h3");
+                interestsTitle.id = "profileInterestsTitle";
                 interestsTitle.textContent = "Мои интересы";
                 interestsTitle.className = "section-title";
 
                 // заголовок для отзывов
                 const reviewsTitle = document.createElement("h3");
+                reviewsTitle.id = "profileReviewsTitle";
                 reviewsTitle.textContent = "Мои отзывы";
                 reviewsTitle.className = "section-title";
 
                 // блок для метчингов
                 const matchEl = document.createElement("h3");
+                matchEl.id = "profileMatchCount";
                 matchEl.className = "section-title match-count";
                 matchEl.style.cssText = "display:flex;align-items:center;gap:12px;margin:10px 0;font-weight:700;";
+                
                 let matchCount = 0;
                 try {
                     matchCount = Number(res.match_count ?? res.matches_count ?? res.matchings_count ?? 0);
@@ -808,6 +840,7 @@ const screenInits = {
                 } catch (e) {
                     matchCount = 0;
                 }
+
                 const lbl = document.createElement("span");
                 lbl.textContent = "Количество метчингов:";
                 lbl.style.cssText = "font-weight:700; font-size:21px; margin-left:3px";
@@ -827,15 +860,15 @@ const screenInits = {
                 // вставляем в правильном порядке: сначала метчинги, затем "Мои интересы" и теги, потом отзывы
                 if (tagsPanel && tagsPanel.parentNode) {
                     const parent = tagsPanel.parentNode;
-                    parent.insertBefore(matchEl, tagsPanel);            // match above tags
-                    insertAfter(matchEl, interestsTitle);               // then title after match
-                    insertAfter(interestsTitle, tagsPanel);             // then tags after title
+                    parent.insertBefore(matchEl, tagsPanel);
+                    insertAfter(matchEl, interestsTitle);
+                    insertAfter(interestsTitle, tagsPanel);
                     insertAfter(tagsPanel, reviewsTitle);
                     insertAfter(reviewsTitle, reviewsSummary);
                 } else {
                     const card = $qs(".profile-card");
                     if (card) {
-                        card.appendChild(matchEl);                      // match first
+                        card.appendChild(matchEl);
                         card.appendChild(interestsTitle);
                         if (tagsPanel) card.appendChild(tagsPanel);
                         card.appendChild(reviewsTitle);
@@ -864,10 +897,11 @@ const screenInits = {
                     }
                     container.appendChild(wrap);
                 }
+
                 // загрузим агрегаты (counts) для текущего профиля
                 (async () => {
                     try {
-                        const data = await fetchReviewsFor(tg_id); // tg_id - уже есть в profile()
+                        const data = await fetchReviewsFor(tg_id);
                         renderReadOnlyReactions(reviewsSummary, data);
                     } catch (err) {
                         console.warn("load profile reviews failed", err);
@@ -877,6 +911,7 @@ const screenInits = {
             } catch(e) {
                 console.warn("profile reviews insert failed", e);
             }
+
             // recent contacts (unchanged)
             if (meetList) {
                 meetList.innerHTML = "";
@@ -905,15 +940,6 @@ const screenInits = {
         } catch (e) {
             console.error("profile load error", e);
         }
-        // в конце profile() после загрузки данных
-        // (async () => {
-        //     const invites = await fetchIncomingInvites();
-        //     if (invites.length) {
-        //         // можно показать список или только первый приглашение
-        //         // здесь показываем модалку для первого
-        //         openIncomingInviteModal(invites[0]);
-        //     }
-        // })();
     },
     profile_edit: async function() {
         const tg_id = getTgId();
@@ -994,6 +1020,7 @@ screenInits.user_profile_view = async function() {
     const viewAge = $qs("#viewAge");
     const reviewsList = $qs("#reviewsList");
     const callBtn = $qs("#callBtn");
+
     // get tg_id from sessionStorage
     const viewTg = sessionStorage.getItem("view_tg_id");
     if (!viewTg) {
@@ -1001,6 +1028,7 @@ screenInits.user_profile_view = async function() {
         if (reviewsList) reviewsList.innerHTML = '<div class="muted">Невозможно загрузить профиль</div>';
         return;
     }
+
     // загрузим профиль целевого пользователя (если у вас API /api/profile?tg_id=... - используем его)
     try {
         const res = await fetch(`/api/profile?tg_id=${encodeURIComponent(viewTg)}`, { cache: "no-store" });
@@ -1011,10 +1039,12 @@ screenInits.user_profile_view = async function() {
         if (viewName) viewName.textContent = u.name || (u.username ? "@" + u.username : "Пользователь");
         // if (viewUsername) viewUsername.textContent = u.username ? `@${u.username}` : "";
         if (viewAge) viewAge.textContent = u.age ? `${u.age} лет` : "";
+        
         // Добавляем заголовок "Интересы"
         const interestsTitle = document.createElement("h3");
         interestsTitle.textContent = "Интересы";
         interestsTitle.className = "section-title";
+
         // render tags for viewed profile
         const viewTagsPanel = document.createElement("div");
         viewTagsPanel.className = "tags-panel";
@@ -1029,6 +1059,7 @@ screenInits.user_profile_view = async function() {
                 viewTagsPanel.appendChild(btn);
             }
         }
+
         // insert tagsPanel right after profile-top (before reviews)
         const profileCard = $qs(".profile-card");
         const topNode = profileCard ? profileCard.querySelector(".profile-top") : null;
@@ -1060,103 +1091,54 @@ screenInits.user_profile_view = async function() {
         console.error("load profile view error", e);
         if (viewName) viewName.textContent = "Ошибка загрузки профиля";
     }
+    
+    // --- replace existing interactive reviewsList block in user_profile_view with this read-only renderer ---
     if (reviewsList) {
         reviewsList.innerHTML = "";
-        const wrap = document.createElement("div");
-        wrap.className = "reactions-wrap";
-        // helper: обновляет кнопки внутри wrap по данным от сервера
-        function updateWrapFromData(wrapEl, data) {
-            const counts = (data && data.counts) ? data.counts : {};
-            const viewerArr = Array.isArray(data && data.viewer) ? data.viewer : [];
-            for (const btn of wrapEl.querySelectorAll(".reaction-item")) {
-                const lbl = btn.dataset.reaction || "";
-                const cnt = Number((counts[lbl] !== undefined) ? counts[lbl] : 0);
-                const badge = btn.querySelector(".reaction-badge");
-                if (badge) badge.textContent = String(cnt);
-                const sel = viewerArr.includes(lbl);
-                btn.classList.toggle("selected", sel);
-                btn.setAttribute("aria-pressed", sel ? "true" : "false");
+        const summaryWrap = document.createElement("div");
+        summaryWrap.className = "reviews-summary";
+
+        // render read-only reactions (same look as profile)
+        function renderReadOnlyReactionsTo(container, data = {counts:{}}) {
+            container.innerHTML = "";
+            const wrap = document.createElement("div");
+            wrap.className = "reactions-wrap readonly";
+            for (const r of reactions) {
+                const lbl = r.label;
+                const cnt = Number((data.counts && data.counts[lbl]) ? data.counts[lbl] : 0);
+                const node = document.createElement("div");
+                node.className = "reaction-item readonly";
+                node.dataset.reaction = lbl;
+                node.setAttribute("aria-hidden", "false");
+                node.innerHTML = `
+                    <div class="reaction-emoji" aria-hidden="true">${r.emoji}</div>
+                    <div class="reaction-label">${escapeHtml(lbl)}</div>
+                    <span class="reaction-badge" aria-hidden="true">${cnt}</span>
+                `;
+                wrap.appendChild(node);
             }
+            container.appendChild(wrap);
         }
-        // создаём кнопки реакций (compact)
-        const viewer = getTgId();
-        const targetTg = String(viewTg || sessionStorage.getItem("view_tg_id") || "");
-        for (const rObj of reactions) {
-            const rawLabel = String(rObj.label || '').trim();
-            const words = rawLabel ? rawLabel.split(/\s+/) : [];
-            const firstWord = words.length ? words.shift() : '';
-            const restText = words.length ? words.join(' ') : '';
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "reaction-item compact";
-            btn.dataset.reaction = rawLabel;
-            btn.setAttribute("role", "button");
-            btn.setAttribute("tabindex", "0");
-            btn.setAttribute("aria-pressed", "false");
-            btn.title = rawLabel;
-            btn.innerHTML = `
-                <div class="reaction-emoji" aria-hidden="true">${rObj.emoji}</div>
-                <div class="reaction-label">
-                    <span class="reaction-first">${escapeHtml(firstWord)}</span>${restText ? ' ' : ''}<span class="reaction-rest">${escapeHtml(restText)}</span>
-                </div>
-                <span class="reaction-badge" aria-hidden="true">0</span>
-            `;
-            // click: toggle review + перезапрос агрегатов и обновление UI
-            btn.addEventListener("click", async (e) => {
-                e.preventDefault();
-                const viewerId = getTgId();
-                if (!viewerId) return alert("Авторизуйтесь через Telegram, чтобы ставить реакции.");
-                const target = targetTg || (reviewsList.dataset && reviewsList.dataset.targetTg) || sessionStorage.getItem("view_tg_id");
-                if (!target) return console.warn("No targetTg for reviewsList");
-                const badge = btn.querySelector(".reaction-badge");
-                const origSelected = btn.classList.contains("selected");
-                const origBadgeCount = badge ? Number(badge.textContent || 0) : 0;
-                // Оптимистично переключаем состояние UI сразу
-                btn.classList.toggle("selected", !origSelected);
-                btn.setAttribute("aria-pressed", !origSelected ? "true" : "false");
-                if (badge) badge.textContent = String(origSelected ? Math.max(0, origBadgeCount - 1) : (origBadgeCount + 1));
-                // блокируем кнопку, чтобы не спамили
-                btn.disabled = true;
-                try {
-                    const payload = { reviewer_tg_id: Number(viewerId), target_tg_id: Number(target), reaction: rawLabel };
-                    const resp = await postJson("/api/review/toggle", payload);
-                    if (!resp || !resp.ok) throw new Error(resp && resp.error ? resp.error : "server error");
-                    // после успеха - перезапросим агрегаты и синхронизируем UI
-                    const refreshed = await fetchReviewsFor(target, viewerId);
-                    updateWrapFromData(wrap, refreshed);
-                } catch (err) {
-                    console.error("toggle review failed", err);
-                    // откатываем оптимистичное изменение
-                    btn.classList.toggle("selected", origSelected);
-                    btn.setAttribute("aria-pressed", origSelected ? "true" : "false");
-                    if (badge) badge.textContent = String(origBadgeCount);
-                    alert("Ошибка: " + (err.message || err));
-                } finally {
-                    btn.disabled = false;
-                }
-            });
-            // клавиатурная доступность (Enter / Space)
-            btn.addEventListener("keydown", (ev) => {
-                if (ev.key === "Enter" || ev.key === " ") {
-                    ev.preventDefault();
-                    btn.click();
-                }
-            });
-            wrap.appendChild(btn);
-        }
-        reviewsList.appendChild(wrap);
-        // initial load counts/state
+
+        // initial load: fetch aggregates (counts) for viewed profile and render
         (async () => {
             try {
-                const tgt = sessionStorage.getItem("view_tg_id") || targetTg;
-                if (!tgt) return;
-                const data = await fetchReviewsFor(tgt, viewer);
-                updateWrapFromData(wrap, data);
+                const tgt = sessionStorage.getItem("view_tg_id");
+                if (!tgt) {
+                    summaryWrap.innerHTML = '<div class="muted">Невозможно загрузить отзывы</div>';
+                } else {
+                    const data = await fetchReviewsFor(tgt); // read-only, no viewer passed
+                    renderReadOnlyReactionsTo(summaryWrap, data);
+                }
             } catch (e) {
-                console.warn("reviews initial fetch failed", e);
+                console.warn("load read-only reviews failed", e);
+                summaryWrap.innerHTML = '<div class="muted">Не удалось загрузить отзывы</div>';
             }
         })();
+
+        reviewsList.appendChild(summaryWrap);
     }
+
     // Позвать - открывает модалку
     if (callBtn) {
         callBtn.onclick = () => openInviteModal(viewTg);
@@ -1171,6 +1153,7 @@ function runScreenInit(name) {
 async function tryAutoStart() {
     const tg_id = await ensureTgId();
     if (!tg_id) return;
+
     // try get geolocation silently
     navigator.geolocation.getCurrentPosition(async pos => {
         try {
@@ -1209,6 +1192,110 @@ async function fetchNotifications() {
 
 function openNotificationModal(notif) {
     if (!notif) return;
+
+    const payload = notif.payload || {};
+    const container = $qs("#screenModals") || (function(){ const c = document.createElement("div"); c.id = "screenModals"; document.body.appendChild(c); return c; })();
+    const id = `notif_${notif.id}_${String(Math.random()).slice(2)}`;
+    const prev = container.querySelector('#' + id);
+    if (prev) prev.remove();
+
+    const modal = document.createElement("div");
+    modal.id = id;
+    modal.className = "modal";
+    // survey
+    if (notif.type === "survey") {
+        const partner = payload.partner_name || "партнёр";
+        const place = payload.place_name || "";
+        modal.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-window" role="dialog" aria-modal="true">
+            <h3>Опрос по встрече</h3>
+            <div class="muted">Сходили ли вы с "${escapeHtml(partner)}" ${place ? 'в "' + escapeHtml(place) + '"' : ''}?</div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+            <button id="${id}_yes" class="btn primary">Да</button>
+            <button id="${id}_no" class="btn">Нет</button>
+            </div>
+        </div>
+        `;
+        container.appendChild(modal);
+        modal.querySelector(".modal-overlay").onclick = () => modal.remove();
+
+        const doRespond = async (ans) => {
+        const tg = getTgId();
+        if (!tg) return alert("Войдите через Telegram");
+        try {
+            const resp = await postJson("/api/survey/respond", { invite_id: payload.invite_id, tg_id: tg, answer: ans });
+            if (!resp || !resp.ok) {
+            alert("Ошибка: " + (resp && resp.error ? resp.error : "server error"));
+            return;
+            }
+            modal.remove();
+        } catch (e) {
+            console.error(e);
+            alert("Ошибка отправки ответа");
+        }
+        };
+
+        modal.querySelector("#" + id + "_yes").onclick = () => doRespond("yes");
+        modal.querySelector("#" + id + "_no").onclick = () => doRespond("no");
+        return;
+    }
+
+    // survey followup (prompt to leave review)
+    if (notif.type === "survey_followup") {
+        const partner = payload.partner_name || "пользователь";
+        const prompt = payload.prompt || `Оставьте отзыв об ${partner}`;
+        const reactions = payload.reactions || [];
+        modal.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-window" role="dialog" aria-modal="true">
+            <h3>Отзыв</h3>
+            <div class="muted">${escapeHtml(prompt)}</div>
+            <div id="${id}_reactions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;"></div>
+        </div>
+        `;
+        container.appendChild(modal);
+        modal.querySelector(".modal-overlay").onclick = () => modal.remove();
+        const wrap = modal.querySelector("#" + id + "_reactions");
+        reactions.forEach(r => {
+        const b = document.createElement("button");
+        b.className = "btn";
+        b.textContent = r;
+        b.onclick = async () => {
+            const tg = getTgId();
+            if (!tg) return alert("Войдите через Telegram");
+            try {
+            const res = await postJson("/api/review/toggle", { reviewer_tg_id: tg, target_tg_id: (payload.partner_tg || payload.partner_tg_id), reaction: r });
+            if (!res || !res.ok) {
+                alert("Ошибка");
+                return;
+            }
+            alert("Спасибо — отзыв сохранён");
+            modal.remove();
+            } catch (e) {
+            console.error(e);
+            alert("Ошибка отправки отзыва");
+            }
+        };
+        wrap.appendChild(b);
+        });
+        return;
+    }
+
+    // survey_negative
+    if (notif.type === "survey_negative") {
+        const msg = (notif.payload && notif.payload.message) || "Ничего страшного — найдете другого.";
+        modal.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-window"><h3>Опрос</h3><div class="muted">${escapeHtml(msg)}</div><div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn" id="${id}_close">Закрыть</button></div></div>
+        `;
+        container.appendChild(modal);
+        modal.querySelector(".modal-overlay").onclick = () => modal.remove();
+        modal.querySelector("#" + id + "_close").onclick = () => modal.remove();
+        return;
+    }
+
+
     const p = notif.payload || {};
     const placeText = p.place_name ? `"${escapeHtml(p.place_name)}"` : "не указан";
     const meal = escapeHtml(p.meal_type || "");
@@ -1217,14 +1304,14 @@ function openNotificationModal(notif) {
     const status = p.status === "accepted" ? "принято" : "отказано";
     const emojis = p.status === "accepted" ? "🥳🥳🥳" : "😭😭😭";
 
-    const container = $qs("#screenModals") || (function(){
-        const c = document.createElement("div"); c.id = "screenModals"; document.body.appendChild(c); return c;
-    })();
-    const id = `notif_${notif.id}_${String(Math.random()).slice(2)}`;
-    const prev = container.querySelector(`#${id}`);
-    if (prev) prev.remove();
+    // const container = $qs("#screenModals") || (function(){
+    //     const c = document.createElement("div"); c.id = "screenModals"; document.body.appendChild(c); return c;
+    // })();
+    // const id = `notif_${notif.id}_${String(Math.random()).slice(2)}`;
+    // const prev = container.querySelector(`#${id}`);
+    // if (prev) prev.remove();
 
-    const modal = document.createElement("div");
+    // const modal = document.createElement("div");
     modal.id = id;
     modal.className = "modal";
     modal.innerHTML = `
@@ -1249,26 +1336,32 @@ async function pollNotificationsOnce() {
     try {
         const notifs = await fetchNotifications();
         if (!Array.isArray(notifs) || notifs.length === 0) return;
-        // показываем только непросмотренные (в пределах сессии)
-        for (const n of notifs.reverse()) { // старые сначала
-            if (seenNotifIds.has(n.id)) continue;
+
+        // Игнорируем те, что уже прочитаны на сервере, и те, что уже показаны в этой сессии
+        const unread = notifs.filter(n => !n.read && !seenNotifIds.has(n.id));
+        if (!unread.length) return;
+
+        // Показываем новые (старые сначала)
+        for (const n of unread.reverse()) {
             seenNotifIds.add(n.id);
-            // покажем модалку / тост
             openNotificationModal(n);
-            // пометим на бэке как прочитанное (опционально)
+
+            // Пометить как прочитанное (best-effort)
             try {
                 const tg = getTgId();
                 if (tg) await postJson("/api/notifications/mark_read", { tg_id: tg, notification_id: n.id });
-            } catch(e) { /* ignore */ }
+            } catch (e) {
+                console.warn("mark_read failed for", n.id, e);
+            }
         }
     } catch (e) {
         console.warn("pollNotificationsOnce failed", e);
     }
 }
 
+
 function startNotificationsPoll(interval = NOTIF_POLL_INTERVAL) {
     if (_notifPollTimer) clearInterval(_notifPollTimer);
-    // стартуем сразу
     pollNotificationsOnce();
     _notifPollTimer = setInterval(pollNotificationsOnce, interval);
 }
@@ -1282,10 +1375,9 @@ function stopNotificationsPoll() {
 
 
 document.addEventListener("DOMContentLoaded", async () => {
-    // Telegram WebApp tweaks
     const tg = window.Telegram?.WebApp;
     if (tg) try { tg.expand(); } catch(e) {}
-    // Auto verify Telegram initData if present
+
     try {
         const rawInit = window.Telegram?.WebApp?.initData ?? null;
         const initData = rawInit ? rawInit : buildInitDataObject();
@@ -1293,7 +1385,6 @@ document.addEventListener("DOMContentLoaded", async () => {
             const resp = await verifyInitData(initData);
             if (resp && resp.ok && resp.tg_id) {
                 saveTgId(resp.tg_id);
-                // optionally save profile locally
                 if (resp.name) localStorage.setItem("meeteat_name", resp.name);
                 if (resp.username) localStorage.setItem("meeteat_username", resp.username);
                 if (resp.avatar) localStorage.setItem("meeteat_avatar", resp.avatar);
@@ -1309,7 +1400,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     startNotificationsPoll();
 
     // --- floating back button (top-left) ---
-    // create once, hidden by default; show/hide via showFloatingBackBtn()
     (function ensureFloatingBackBtn(){
         if ($qs("#floatingBackBtn")) return;
         const btn = document.createElement("button");
@@ -1317,7 +1407,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         btn.type = "button";
         btn.setAttribute("aria-label", "Назад");
         btn.title = "Назад";
-        btn.style.display = "none"; // hidden by default
+        btn.style.display = "none";
         btn.innerHTML = `
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
                 <path d="M15 18L9 12L15 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1334,11 +1424,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (e.key === "Enter" || e.key === " ") { e.preventDefault(); btn.click(); }
         });
         document.body.appendChild(btn);
-        // helper exposed locally
         window.showFloatingBackBtn = function(show) {
-            try {
-                btn.style.display = show ? "inline-flex" : "none";
-            } catch (e) { /* ignore */ }
+            try { btn.style.display = show ? "inline-flex" : "none"; } catch (e) {}
         };
     })();
     const menu = $qs("#menu");
@@ -1349,7 +1436,6 @@ document.addEventListener("DOMContentLoaded", async () => {
             loadScreen(b.dataset.screen);
         });
     }
-    // initial screen from hash
     const initial = location.hash?.slice(1) || "home";
     loadScreen(initial);
 });
@@ -1358,7 +1444,6 @@ window.addEventListener("popstate", (e) => {
     loadScreen(s);
 });
 
-// Экспорты (если нужно для других модулей)
 export {
     renderPersonCard, renderInterestCard, fetchSimilarAndRender,
     fetchReviewsFor, renderRecentReviews,

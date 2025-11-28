@@ -22,6 +22,165 @@ log = logging.getLogger("meet_eat")
 
 router = APIRouter()
 
+import asyncio
+import json
+
+
+async def edit_message_reply_markup(chat_id: int = None, message_id: int = None, inline_message_id: str = None, reply_markup: dict = None):
+    if not BOT_TOKEN:
+        return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageReplyMarkup"
+    payload = {}
+    if chat_id is not None and message_id is not None:
+        payload["chat_id"] = chat_id
+        payload["message_id"] = message_id
+    elif inline_message_id is not None:
+        payload["inline_message_id"] = inline_message_id
+    if reply_markup is not None:
+        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+    try:
+        async with aiohttp.ClientSession() as sess:
+            await sess.post(url, json=payload, timeout=5)
+    except Exception:
+        logging.exception("editMessageReplyMarkup failed")
+
+
+async def edit_message_text(chat_id: int = None, message_id: int = None, inline_message_id: str = None, text: str = None):
+    if not BOT_TOKEN:
+        return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
+    payload = {"parse_mode": "HTML"}
+    if chat_id is not None and message_id is not None:
+        payload["chat_id"] = chat_id
+        payload["message_id"] = message_id
+    elif inline_message_id is not None:
+        payload["inline_message_id"] = inline_message_id
+    payload["text"] = text or ""
+    try:
+        async with aiohttp.ClientSession() as sess:
+            await sess.post(url, json=payload, timeout=5)
+    except Exception:
+        logging.exception("editMessageText failed")
+
+
+
+# helper — формирует телеграм inline keyboard (Yes/No)
+# def telegram_survey_keyboard(invite_id):
+#     return {
+#         "inline_keyboard": [
+#             [{"text":"Да","callback_data": f"survey:{invite_id}:yes"}],
+#             [{"text":"Нет","callback_data": f"survey:{invite_id}:no"}]
+#         ]
+#     }
+
+async def dispatch_surveys_once():
+    """Ищет accepted invites с ответом >=1 час назад и survey_sent=0, создает notifications и отправляет telegram."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        # выбираем все приглашения, принятые >= 1 час назад и для которых опрос ещё не отправлен
+        cur = await db.execute("""
+            SELECT i.id, i.from_user_id, i.to_user_id, i.place_name, i.responded_at,
+                fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
+            FROM invites i
+            JOIN users fu ON fu.id = i.from_user_id
+            JOIN users tu ON tu.id = i.to_user_id
+            WHERE i.status = 'accepted' AND IFNULL(i.survey_sent,0) = 0
+                AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-10 seconds')
+        """)
+            #   AND datetime(i.responded_at) <= datetime('now', '-1 hour')
+        rows = await cur.fetchall()
+        if not rows:
+            return
+
+        for r in rows:
+            invite_id = r["id"]
+
+            # пытаемся пометить invite как отправленный (только если ещё не помечен)
+            await db.execute("UPDATE invites SET survey_sent = 1 WHERE id = ? AND IFNULL(survey_sent,0) = 0", (invite_id,))
+            await db.commit()
+            cur_changes = await db.execute("SELECT changes() AS cnt")
+            ch = await cur_changes.fetchone()
+            if not ch or int(ch["cnt"]) == 0:
+                continue
+
+            # payload для уведомления в мини-аппе
+            # отправим каждому участнику персонализованный payload
+            # payload_from => инициатор (отправителю оповещения о том, что нужно ответить)
+            payload_from = {
+                "invite_id": invite_id,
+                "place_name": r["place_name"],
+                "partner_name": r["to_name"],
+                "partner_tg": r["to_tg"],
+                "role": "initiator"
+            }
+            payload_to = {
+                "invite_id": invite_id,
+                "place_name": r["place_name"],
+                "partner_name": r["from_name"],
+                "partner_tg": r["from_tg"],
+                "role": "responder"
+            }
+
+            # вставляем в таблицу notifications (инициатор)
+            await db.execute(
+                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                (r["from_user_id"], "survey", json.dumps(payload_from, ensure_ascii=False))
+            )
+            # для респондента
+            await db.execute(
+                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                (r["to_user_id"], "survey", json.dumps(payload_to, ensure_ascii=False))
+            )
+            await db.commit()
+
+            # попробуем отправить Telegram (best-effort)
+            try:
+                # initiator
+                if r["from_tg"]:
+                    text = f'Сходили ли вы с "{r["to_name"]}" в "{r["place_name"]}"?'
+                    # await send_telegram_message(r["from_tg"], text, reply_markup=telegram_survey_keyboard(invite_id))
+                    await send_telegram_message(r["from_tg"], text)
+                # responder
+                if r["to_tg"]:
+                    text2 = f'Сходили ли вы с "{r["from_name"]}" в "{r["place_name"]}"?'
+                    # await send_telegram_message(r["to_tg"], text2, reply_markup=telegram_survey_keyboard(invite_id))
+                    await send_telegram_message(r["to_tg"], text2)
+            except Exception:
+                logging.exception("survey send telegram failed for invite %s", invite_id)
+
+        await db.commit()
+
+async def survey_dispatcher_loop(
+    poll_interval=2
+    # poll_interval=60
+):
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await dispatch_surveys_once()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logging.exception("survey_dispatcher_loop failed")
+        await asyncio.sleep(poll_interval)
+
+# функция для прикрепления воркера к FastAPI app (вызвать из main)
+def attach_survey_worker(app):
+    @app.on_event("startup")
+    async def start_survey_worker():
+        app.state._survey_task = asyncio.create_task(survey_dispatcher_loop())
+
+    @app.on_event("shutdown")
+    async def stop_survey_worker():
+        t = getattr(app.state, "_survey_task", None)
+        if t:
+            t.cancel()
+
+
+
+
+
 ALLOWED_REACTIONS = [
     "Приятный собеседник",
     "Мыслит нестандартно",
@@ -57,9 +216,6 @@ import hashlib, hmac
 BOT_TOKEN = "7642738760:AAEZ-8IwR1wNbxvbQyjuo4mTNKGYgJAXy5E"
 secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
 
-import os
-import json
-import aiohttp
 
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "")
 
@@ -119,24 +275,43 @@ async def handle_invite_response(invite_id: int, responder_tg: int, action: str)
         inv = await cur.fetchone()
         if not inv:
             return {"ok": False, "error": "invite not found"}
-        if int(inv["to_tg"]) != int(responder_tg):
+       
+        # --- безопасная проверка: responder имеет право отвечать на это приглашение ---
+        try:
+            stored_to_tg = inv["to_tg"]
+        except Exception:
+            stored_to_tg = None
+
+        # Если в БД нет to_tg или он не совпадает с приславшим запрос — отказ
+        try:
+            if stored_to_tg is None or int(stored_to_tg) != int(responder_tg):
+                return {"ok": False, "error": "not authorized"}
+        except Exception:
             return {"ok": False, "error": "not authorized"}
+
         if inv["status"] != "pending":
             return {"ok": False, "error": f"already {inv['status']}"}
 
         new_status = "accepted" if action == "accept" else "declined"
-        now_s = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        # now_s = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
         # найдем responder_user_id
         cur = await db.execute("SELECT id, name, username, tg_id FROM users WHERE tg_id = ?", (responder_tg,))
         r = await cur.fetchone()
         responder_user_id = r["id"] if r else None
         responder_name = None
+        responder_username = None
         if r:
-            responder_name = r["name"] or (("@" + str(r["username"])) if r["username"] else ("@" + str(r["tg_id"])))
+            responder_name = r["name"] or None
+            responder_username = (r["username"] or None)
 
-        await db.execute("UPDATE invites SET status = ?, responder_user_id = ?, responded_at = ?, updated_at = ? WHERE id = ?",
-                         (new_status, responder_user_id, now_s, now_s, invite_id))
+        # await db.execute(
+        #     "UPDATE invites SET status = ?, responder_user_id = ?, responded_at = ?, updated_at = ? WHERE id = ?",
+        #     (new_status, responder_user_id, now_s, now_s, invite_id))
+        # await db.commit()
+        await db.execute(
+            "UPDATE invites SET status = ?, responder_user_id = ?, responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (new_status, responder_user_id, invite_id))
         await db.commit()
 
         # --- подготовка читаемого времени (Asia/Almaty) ---
@@ -173,10 +348,27 @@ async def handle_invite_response(invite_id: int, responder_tg: int, action: str)
         status_text = "принято" if new_status == "accepted" else "отказано"
         emojis = "🥳🥳🥳" if new_status == "accepted" else "😭😭😭"
 
-        responder_display = responder_name or ("@" + str(responder_tg)) if responder_tg else "пользователь"
+        # responder_display = responder_name or ("@" + str(responder_tg)) if responder_tg else "пользователь"
+        if responder_name:
+            responder_display = responder_name
+        elif responder_username:
+            responder_display = "@" + str(responder_username)
+        elif responder_tg:
+            responder_display = "@" + str(responder_tg)
+        else:
+            responder_display = "пользователь"
+
         when_part = f"в {time_readable}" if time_readable else (f"в {inv['time_iso']}" if inv["time_iso"] else "")
 
-        telegram_text = f'Ваше приглашение{place_text} с {responder_display} на {meal_type} {when_part} было {status_text} {emojis}'
+        # При принятии добавляем отдельную строку с username (если есть) — как просил
+        contact_line = ""
+        if new_status == "accepted":
+            if responder_username:
+                contact_line = f"\n\nСвяжись с @{responder_username}"
+            elif responder_tg:
+                contact_line = f"\n\nСвяжись с @{responder_tg}"
+
+        telegram_text = f'Ваше приглашение{place_text} с {responder_display} на {meal_type} {when_part} было {status_text} {emojis}{contact_line}'
 
         # Отправим Telegram (best-effort)
         try:
@@ -219,6 +411,7 @@ async def index(request: Request):
         raise HTTPException(status_code=404, detail="index.html not found")
     context = {"request": request}
     return templates.TemplateResponse("index.html", context)
+
 
 @router.post("/start")
 async def start_session(request: Request):
@@ -345,8 +538,103 @@ async def get_screen_with_ext(request: Request, name: str):
     return templates.TemplateResponse(tmpl, context)
 
 
+
+@router.post("/api/survey/respond")
+async def api_survey_respond(request: Request):
+    body = await request.json()
+    invite_id = int(body.get("invite_id"))
+    tg_id = int(body.get("tg_id"))  # кто отвечает
+
+    # 'yes' | 'no'
+    answer = (body.get("answer") or "").lower()
+    if answer not in ("yes", "no"):
+        raise HTTPException(400, "answer must be 'yes' or 'no'")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # проверим user
+        cur = await db.execute("SELECT id FROM users WHERE tg_id = ?", (tg_id,))
+        user = await cur.fetchone()
+        if not user:
+            return {"ok": False, "error": "user not found"}
+        user_id = user["id"]
+
+        # не позволяем дважды отвечать
+        cur = await db.execute("SELECT id FROM invite_surveys WHERE invite_id = ? AND user_id = ?", (invite_id, user_id))
+        if await cur.fetchone():
+            return {"ok": False, "error": "already answered"}
+
+        # insert response
+        await db.execute("INSERT INTO invite_surveys (invite_id, user_id, answer) VALUES (?, ?, ?)", (invite_id, user_id, answer))
+        await db.commit()
+
+        # get invite + partner info to craft follow-up
+        cur = await db.execute("""
+            SELECT i.id, i.from_user_id, i.to_user_id, i.place_name,
+                   fu.tg_id AS from_tg, fu.name AS from_name,
+                   tu.tg_id AS to_tg, tu.name AS to_name
+            FROM invites i
+            JOIN users fu ON fu.id = i.from_user_id
+            JOIN users tu ON tu.id = i.to_user_id
+            WHERE i.id = ?
+        """, (invite_id,))
+        inv = await cur.fetchone()
+        if not inv:
+            return {"ok": False, "error": "invite not found"}
+
+        # определим партнёра
+        if inv["from_user_id"] == user_id:
+            partner_name = inv["to_name"]
+            partner_tg = inv["to_tg"]
+            partner_id = inv["to_user_id"]
+        else:
+            partner_name = inv["from_name"]
+            partner_tg = inv["from_tg"]
+            partner_id = inv["from_user_id"]
+
+        # отправляем follow-up либо сообщение "Ничего страшного"
+        if answer == "yes":
+            # создаём notification prompting to leave review (mini-app)
+            payload = {
+                "invite_id": invite_id,
+                "partner_name": partner_name,
+                "place_name": inv["place_name"],
+                "partner_tg": partner_tg,
+                "prompt": f'Супер, оставьте отзыв об пользователе "{partner_name}"',
+                "reactions": ALLOWED_REACTIONS
+            }
+            await db.execute(
+                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                (user_id, "survey_followup", json.dumps(payload, ensure_ascii=False))
+            )
+
+            # optional: send Telegram with reaction buttons (callback_data: review:<invite_id>:<reaction>)
+            if partner_tg:
+                try:
+                    # Для Telegram — отправляем пользователю который ответил (not partner)
+                    # kb = {"inline_keyboard": [[{"text": r, "callback_data": f"review:{invite_id}:{r}"}] for r in ALLOWED_REACTIONS]}
+                    # await send_telegram_message(tg_id, payload["prompt"], reply_markup=kb)
+                    await send_telegram_message(tg_id, payload["prompt"])
+                except Exception:
+                    logging.exception("telegram send followup failed")
+            return {"ok": True, "action": "ask_review"}
+        else:
+            # answer == 'no'
+            payload = {"message": f'Ничего страшного — найдете другого.'}
+            await db.execute("INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                             (user_id, "survey_negative", json.dumps(payload, ensure_ascii=False)))
+            await db.commit()
+            
+            # optionally notify via telegram
+            try:
+                await send_telegram_message(tg_id, payload["message"])
+            except Exception:
+                pass
+            return {"ok": True, "action": "noted"}
+
+
 @router.get("/api/notifications")
-async def api_notifications(tg_id: int, since_id: int = 0, limit: int = 20):
+async def api_notifications(tg_id: int, since_id: int = 0, limit: int = 20, include_read: bool = False):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT id FROM users WHERE tg_id = ?", (tg_id,))
@@ -354,10 +642,32 @@ async def api_notifications(tg_id: int, since_id: int = 0, limit: int = 20):
         if not row:
             return {"ok": True, "notifications": []}
         user_id = row["id"]
-        if since_id and isinstance(since_id, int) and since_id > 0:
-            cur = await db.execute("SELECT id, type, payload, read, created_at FROM notifications WHERE user_id = ? AND id > ? ORDER BY id DESC LIMIT ?", (user_id, since_id, limit))
+
+        # Формируем SQL в зависимости от include_read и since_id
+        if include_read:
+            if since_id and since_id > 0:
+                cur = await db.execute(
+                    "SELECT id, type, payload, read, created_at FROM notifications WHERE user_id = ? AND id > ? ORDER BY id DESC LIMIT ?",
+                    (user_id, since_id, limit)
+                )
+            else:
+                cur = await db.execute(
+                    "SELECT id, type, payload, read, created_at FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                    (user_id, limit)
+                )
         else:
-            cur = await db.execute("SELECT id, type, payload, read, created_at FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?", (user_id, limit))
+            # По умолчанию возвращаем только непрочитанные (read = 0)
+            if since_id and since_id > 0:
+                cur = await db.execute(
+                    "SELECT id, type, payload, read, created_at FROM notifications WHERE user_id = ? AND read = 0 AND id > ? ORDER BY id DESC LIMIT ?",
+                    (user_id, since_id, limit)
+                )
+            else:
+                cur = await db.execute(
+                    "SELECT id, type, payload, read, created_at FROM notifications WHERE user_id = ? AND read = 0 ORDER BY id DESC LIMIT ?",
+                    (user_id, limit)
+                )
+
         rows = await cur.fetchall()
         out = []
         for r in rows:
@@ -373,6 +683,7 @@ async def api_notifications(tg_id: int, since_id: int = 0, limit: int = 20):
                 "created_at": r["created_at"]
             })
         return {"ok": True, "notifications": out}
+
 
 @router.post("/api/notifications/mark_read")
 async def api_notifications_mark_read(request: Request):
@@ -535,20 +846,21 @@ async def api_invite(request: Request):
             text = f"У вас новое приглашение{place_text} от {from_display} на {meal} {when_part}."
 
         # inline keyboard with callback_data
-        keyboard_buttons = [
-            [
-                {"text": "Принять", "callback_data": f"invite:{invite_id}:accept"},
-                {"text": "Отказать", "callback_data": f"invite:{invite_id}:decline"}
-            ]
-        ]
-        if SERVER_BASE_URL:
-            profile_url = SERVER_BASE_URL.rstrip('/') + f"/#user_profile_view?tg_id={from_tg}"
-            keyboard_buttons.append([{"text": "Открыть профиль", "url": profile_url}])
+        # keyboard_buttons = [
+        #     [
+        #         {"text": "Принять", "callback_data": f"invite:{invite_id}:accept"},
+        #         {"text": "Отказать", "callback_data": f"invite:{invite_id}:decline"}
+        #     ]
+        # ]
+        # if SERVER_BASE_URL:
+        #     profile_url = SERVER_BASE_URL.rstrip('/') + f"/#user_profile_view?tg_id={from_tg}"
+        #     keyboard_buttons.append([{"text": "Открыть профиль", "url": profile_url}])
 
-        keyboard = {"inline_keyboard": keyboard_buttons}
+        # keyboard = {"inline_keyboard": keyboard_buttons}
 
         try:
-            resp = await send_telegram_message(to_tg, text, reply_markup=keyboard)
+            # resp = await send_telegram_message(to_tg, text, reply_markup=keyboard)
+            resp = await send_telegram_message(to_tg, text)
             logging.info("telegram notify result for invite %s -> %s : %s", invite_id, to_tg, resp)
         except Exception:
             logging.exception("telegram notify failed for invite")
@@ -562,6 +874,92 @@ async def api_invite(request: Request):
         pass
 
     return {"ok": True, "invite_id": invite_id}
+
+
+async def handle_survey_response(invite_id: int, responder_tg: int, ans: str):
+    """Helper: обработать ответ на survey (можно вызывать из webhook и из API)."""
+    answer = (ans or "").lower()
+    if answer not in ("yes", "no"):
+        return {"ok": False, "error": "invalid answer"}
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # проверим user
+        cur = await db.execute("SELECT id FROM users WHERE tg_id = ?", (responder_tg,))
+        user = await cur.fetchone()
+        if not user:
+            return {"ok": False, "error": "user not found"}
+        user_id = user["id"]
+
+        # не позволяем дважды отвечать
+        cur = await db.execute("SELECT id FROM invite_surveys WHERE invite_id = ? AND user_id = ?", (invite_id, user_id))
+        if await cur.fetchone():
+            return {"ok": False, "error": "already answered"}
+
+        # insert response
+        await db.execute("INSERT INTO invite_surveys (invite_id, user_id, answer, created_at) VALUES (?, ?, ?, datetime('now'))", (invite_id, user_id, answer))
+        await db.commit()
+
+        # get invite + partner info to craft follow-up
+        cur = await db.execute("""
+            SELECT i.id, i.from_user_id, i.to_user_id, i.place_name,
+                   fu.tg_id AS from_tg, fu.name AS from_name,
+                   tu.tg_id AS to_tg, tu.name AS to_name
+            FROM invites i
+            JOIN users fu ON fu.id = i.from_user_id
+            JOIN users tu ON tu.id = i.to_user_id
+            WHERE i.id = ?
+        """, (invite_id,))
+        inv = await cur.fetchone()
+        if not inv:
+            return {"ok": False, "error": "invite not found"}
+
+        # определим партнёра
+        if inv["from_user_id"] == user_id:
+            partner_name = inv["to_name"]
+            partner_tg = inv["to_tg"]
+            partner_id = inv["to_user_id"]
+        else:
+            partner_name = inv["from_name"]
+            partner_tg = inv["from_tg"]
+            partner_id = inv["from_user_id"]
+
+        # отправляем follow-up либо сообщение "Ничего страшного"
+        if answer == "yes":
+            payload = {
+                "invite_id": invite_id,
+                "partner_name": partner_name,
+                "partner_tg": partner_tg,
+                "place_name": inv["place_name"],
+                "prompt": f'Супер, оставьте отзыв об пользователе "{partner_name}"',
+                "reactions": ALLOWED_REACTIONS
+            }
+
+            await db.execute(
+                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                (user_id, "survey_followup", json.dumps(payload, ensure_ascii=False))
+            )
+            await db.commit()
+            # send telegram with reaction buttons to the user who answered
+            try:
+                # kb = {"inline_keyboard": [[{"text": r, "callback_data": f"review:{invite_id}:{r}"}] for r in ALLOWED_REACTIONS]}
+                # await send_telegram_message(responder_tg, payload["prompt"], reply_markup=kb)
+                await send_telegram_message(responder_tg, payload["prompt"])
+            except Exception:
+                logging.exception("telegram send followup failed")
+            return {"ok": True, "action": "ask_review"}
+        else:
+            payload = {"message": f'Ничего страшного — найдете другого.'}
+            await db.execute("INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                             (user_id, "survey_negative", json.dumps(payload, ensure_ascii=False)))
+            await db.commit()
+            try:
+                await send_telegram_message(responder_tg, payload["message"])
+            except Exception:
+                logging.exception("telegram send negative failed")
+            return {"ok": True, "action": "noted"}
+
 
 @router.post("/api/invite/respond")
 async def api_invite_respond(request: Request):
@@ -1090,23 +1488,45 @@ async def api_tags(limit: int = 100):
 
 
 
+async def handle_review_from_survey(invite_id: int, reviewer_tg: int, reaction: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT from_user_id, to_user_id FROM invites WHERE id = ?", (invite_id,))
+        inv = await cur.fetchone()
+        if not inv:
+            return {"ok": False, "error": "invite not found"}
+        # определить target (если reviewer == from_user -> target = to_user_id и наоборот)
+        cur = await db.execute("SELECT id FROM users WHERE tg_id = ?", (reviewer_tg,))
+        r = await cur.fetchone()
+        if not r: return {"ok": False, "error": "reviewer not found"}
+        reviewer_id = r["id"]
+        if reviewer_id == inv["from_user_id"]:
+            target_id = inv["to_user_id"]
+        else:
+            target_id = inv["from_user_id"]
 
+        # тут можно добавлять в reviews или вызывать существующую логику
+        await db.execute("INSERT INTO reviews (reviewer_id, target_user_id, reaction, created_at) VALUES (?, ?, ?, datetime('now'))",
+                         (reviewer_id, target_id, reaction))
+        await db.commit()
+        return {"ok": True}
 
 
 
 @router.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     data = await request.json()
+
     # handle callback_query
     if "callback_query" in data:
         cq = data["callback_query"]
         cq_id = cq.get("id")
         from_user = cq.get("from", {})
         tg_user_id = from_user.get("id")
-        data_str = cq.get("data", "")
-        # expected format: invite:<invite_id>:<action>
-        if data_str and data_str.startswith("invite:"):
-            try:
+        data_str = cq.get("data", "") or ""
+
+        try:
+            if data_str.startswith("invite:"):
                 _, sid, action = data_str.split(":", 2)
                 iid = int(sid)
                 if action not in ("accept", "decline"):
@@ -1117,9 +1537,79 @@ async def telegram_webhook(request: Request):
                     await answer_callback_query(cq_id, f"Вы {('приняли' if action=='accept' else 'отклонили')} приглашение", show_alert=False)
                 else:
                     await answer_callback_query(cq_id, res.get("error", "Ошибка"), show_alert=True)
-            except Exception as e:
-                logging.exception("telegram callback handling failed")
-                await answer_callback_query(cq_id, "Ошибка при обработке", show_alert=True)
-        return {"ok": True}
-    # optional: handle messages to bot, /start etc.
+                return {"ok": True}
+
+            # после успешной обработки invite:
+            if res.get("ok"):
+                await answer_callback_query(cq_id, f"Вы {('приняли' if action=='accept' else 'отклонили')} приглашение", show_alert=False)
+                # попробуем обновить текст и убрать кнопки в исходном сообщении (если callback пришёл из сообщения)
+                try:
+                    msg = cq.get("message")
+                    if msg and "chat" in msg and "message_id" in msg:
+                        chat_id = msg["chat"]["id"]
+                        mid = msg["message_id"]
+                        # пометить в тексте
+                        new_text = (msg.get("text") or "") + ("\n\n✅ Вы приняли" if action=="accept" else "\n\n❌ Вы отказались")
+                        await edit_message_text(chat_id=chat_id, message_id=mid, text=new_text)
+                        await edit_message_reply_markup(chat_id=chat_id, message_id=mid, reply_markup={"inline_keyboard": []})
+                except Exception:
+                    logging.exception("failed to update invite message after callback")
+
+            if data_str.startswith("survey:"):
+                # формат: survey:<invite_id>:<answer>
+                _, sid, ans = data_str.split(":", 2)
+                iid = int(sid)
+                if ans not in ("yes", "no"):
+                    await answer_callback_query(cq_id, "Неверный ответ", show_alert=True)
+                else:
+                    res = await handle_survey_response(iid, tg_user_id, ans)
+                    if res.get("ok"):
+                        await answer_callback_query(cq_id, "Спасибо, ответ принят", show_alert=False)
+                    else:
+                        await answer_callback_query(cq_id, res.get("error","Ошибка"), show_alert=True)
+                return {"ok": True}
+            
+            if res.get("ok"):
+                await answer_callback_query(cq_id, "Спасибо, ответ принят", show_alert=False)
+                try:
+                    msg = cq.get("message")
+                    if msg and "chat" in msg and "message_id" in msg:
+                        chat_id = msg["chat"]["id"]
+                        mid = msg["message_id"]
+                        choice = "Да" if ans=="yes" else "Нет"
+                        new_text = (msg.get("text") or "") + f"\n\nВы ответили: {choice} ✅"
+                        await edit_message_text(chat_id=chat_id, message_id=mid, text=new_text)
+                        await edit_message_reply_markup(chat_id=chat_id, message_id=mid, reply_markup={"inline_keyboard": []})
+                except Exception:
+                    logging.exception("failed to update survey message after callback")
+
+
+            if data_str.startswith("review:"):
+                # формат: review:<invite_id>:<reaction_label>
+                _, sid, reaction = data_str.split(":", 2)
+                iid = int(sid)
+                res = await handle_review_from_survey(iid, tg_user_id, reaction)
+                if res.get("ok"):
+                    await answer_callback_query(cq_id, "Отзыв сохранён — спасибо!", show_alert=False)
+                else:
+                    await answer_callback_query(cq_id, res.get("error","Ошибка"), show_alert=True)
+                return {"ok": True}
+            
+            if res.get("ok"):
+                await answer_callback_query(cq_id, "Отзыв сохранён — спасибо!", show_alert=False)
+                try:
+                    msg = cq.get("message")
+                    if msg and "chat" in msg and "message_id" in msg:
+                        chat_id = msg["chat"]["id"]
+                        mid = msg["message_id"]
+                        new_text = (msg.get("text") or "") + "\n\n✅ Отзыв сохранён"
+                        await edit_message_text(chat_id=chat_id, message_id=mid, text=new_text)
+                        await edit_message_reply_markup(chat_id=chat_id, message_id=mid, reply_markup={"inline_keyboard": []})
+                except Exception:
+                    logging.exception("failed to update review message after callback")
+        except Exception:
+            logging.exception("telegram callback handling failed")
+            await answer_callback_query(cq_id, "Ошибка при обработке", show_alert=True)
+            return {"ok": True}
+
     return {"ok": True}

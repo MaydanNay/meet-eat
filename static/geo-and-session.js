@@ -17,6 +17,22 @@ import {
     tryAutoStart
 } from "./ui-and-screens.js";
 
+function parseServerDatetime(s) {
+    if (!s) return null;
+
+    // если уже ISO
+    if (s.includes("T") || s.endsWith("Z")) {
+        const d = new Date(s);
+        return isNaN(d) ? null : d;
+    }
+    
+    // формат "YYYY-MM-DD HH:MM:SS" -> сделать ISO UTC
+    const iso = s.replace(" ", "T") + "Z";
+    const d = new Date(iso);
+    return isNaN(d) ? null : d;
+}
+
+
 // Геолокация helpers
 function getCurrentPositionPromise(options = { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }) {
     return new Promise((resolve, reject) => {
@@ -37,8 +53,12 @@ function randomDelayMs(min = 3000, max = 5000) {
 function startRadarRings(count = 3) {
     const el = getEatCircle();
     if (!el) return;
-    // уже запущено - ничего не делаем
-    if (el._radarActive) return;
+
+    // убираем старые кольца (с запасом)
+    if (el._radarRings && el._radarRings.length) {
+        for (const rr of el._radarRings) try{ rr.remove(); }catch(e){}
+    }
+
     el._radarActive = true;
     el._radarRings = [];
     const duration = 2000;
@@ -56,16 +76,15 @@ function startRadarRings(count = 3) {
 function stopRadarRings() {
     const el = getEatCircle();
     if (!el || !el._radarActive) return;
-   
-    // Удаляем элементы через requestAnimationFrame для плавного ухода (и чтобы не дергать layout)
     const rings = el._radarRings || [];
     for (const r of rings) {
         try { r.style.transition = "opacity 250ms linear"; r.style.opacity = "0"; } catch(e){}
         setTimeout(() => { try { r.remove(); } catch(e){} }, 300);
     }
-    el._radarRings = null;
+    el._radarRings = [];
     el._radarActive = false;
 }
+
 
 // Eat circle и hints
 function showEatHint(text) {
@@ -90,11 +109,9 @@ function setEatCircleSearching(on) {
     if (!el) return;
     if (on) {
         el.classList.add("searching");
-        // запускаем радар (3 кольца)
         startRadarRings(3);
     } else {
         el.classList.remove("searching");
-        // останавливаем радар
         stopRadarRings();
     }
 }
@@ -131,9 +148,11 @@ async function startEatingWithDelay() {
     if (!verified.ok) { alert("Auth failed"); return; }
     const tg_id = verified.tg_id;
     saveTgId(tg_id);
+    
     // UI: показываем что ищем
     setEatCircleSearching(true);
     showEatHint("Ищем людей поблизости…");
+
     // параллельно: геопозиция и искусственная задержка
     const delayMs = randomDelayMs(3000, 5000);
     const delayP = sleep(delayMs);
@@ -152,18 +171,20 @@ async function startEatingWithDelay() {
         else alert("Не удалось получить геопозицию: " + (geoErr.message || geoErr));
         return;
     }
+
     // если получили позицию - отправляем /start и запускаем nearby
     try {
         const body = { tg_id, lat: pos.coords.latitude, lon: pos.coords.longitude };
         const data = await postJson("/start", body);
+        
         // render nearby
         await fetchNearbyAndRender(tg_id, body.lat, body.lon);
+        
         // запустить таймер и UI
         showEatStatus(data.expires_at);
         showTimerAndUi(data.expires_at);
         startUpdateLoop(tg_id);
         setEatCircleActive(true);
-        // подсказку скрываем (eatStatus появится)
         hideEatHint();
     } catch (e) {
         console.error("startWithDelay failed", e);
@@ -171,32 +192,73 @@ async function startEatingWithDelay() {
         setEatCircleSearching(false);
         showEatHint("Нажми на кнопку, чтобы найти людей рядом");
     } finally {
-        // если по каким-то причинам searching ещё включен - выключим (active держит анимацию)
         setEatCircleSearching(false);
     }
 }
 
 let eatStatusIntervalId = null;
+// function showEatStatus(expires_iso) {
+//     const el = $qs("#eatStatus");
+//     const timerEl = $qs("#eatStatusTimer");
+//     if (!el || !timerEl) return;
+
+//     // прячем кнопку
+//     hideShareButton();
+//     el.classList.remove("hidden");
+    
+//     // очищаем старый интервал
+//     if (eatStatusIntervalId) {
+//         clearInterval(eatStatusIntervalId);
+//         eatStatusIntervalId = null;
+//     }
+
+//     function tick() {
+//         const expires = new Date(expires_iso);
+//         const rem = Math.max(0, expires - new Date());
+//         const mins = Math.floor(rem / 60000);
+//         const secs = Math.floor((rem % 60000) / 1000);
+//         const mm = String(mins).padStart(2,"0");
+//         const ss = String(secs).padStart(2,"0");
+//         timerEl.textContent = `${mm}:${ss}`;
+//         if (rem <= 0) {
+//             hideEatStatus();
+//             showShareButton();
+//             stopUpdateLoop();
+//             if (eatStatusIntervalId) {
+//                 clearInterval(eatStatusIntervalId);
+//                 eatStatusIntervalId = null;
+//             }
+//         }
+//     }
+//     tick();
+//     eatStatusIntervalId = setInterval(tick, 1000);
+//     setEatCircleActive(true);
+// }
+
 function showEatStatus(expires_iso) {
     const el = $qs("#eatStatus");
     const timerEl = $qs("#eatStatusTimer");
     if (!el || !timerEl) return;
-    // прячем кнопку
+
     hideShareButton();
     el.classList.remove("hidden");
-    // очищаем старый интервал
+
     if (eatStatusIntervalId) {
         clearInterval(eatStatusIntervalId);
         eatStatusIntervalId = null;
     }
+
+    const expiresDate = parseServerDatetime(expires_iso);
+    if (!expiresDate) {
+        timerEl.textContent = "";
+        return;
+    }
+
     function tick() {
-        const expires = new Date(expires_iso);
-        const rem = Math.max(0, expires - new Date());
+        const rem = Math.max(0, expiresDate - new Date());
         const mins = Math.floor(rem / 60000);
         const secs = Math.floor((rem % 60000) / 1000);
-        const mm = String(mins).padStart(2,"0");
-        const ss = String(secs).padStart(2,"0");
-        timerEl.textContent = `${mm}:${ss}`;
+        timerEl.textContent = `${String(mins).padStart(2,"0")}:${String(secs).padStart(2,"0")}`;
         if (rem <= 0) {
             hideEatStatus();
             showShareButton();
@@ -211,6 +273,7 @@ function showEatStatus(expires_iso) {
     eatStatusIntervalId = setInterval(tick, 1000);
     setEatCircleActive(true);
 }
+
 
 function hideEatStatus(){
     setEatCircleActive(false);
@@ -305,9 +368,9 @@ function stopUpdateLoop() {
 
 // Timer UI
 function showTimerAndUi(expires_iso) {
-    const expires = new Date(expires_iso);
+    const expires = parseServerDatetime(expires_iso);
     const timerEl = $qs("#timer");
-    if (!timerEl) return;
+    if (!timerEl || !expires) return;
     timerEl.style.display = "block";
     let tid = null;
     function tick() {
@@ -318,16 +381,14 @@ function showTimerAndUi(expires_iso) {
         if (rem <= 0) {
             timerEl.textContent = "Сессия завершена";
             stopUpdateLoop();
-            if (tid) {
-                clearInterval(tid);
-                tid = null;
-            }
+            if (tid) { clearInterval(tid); tid = null; }
         }
     }
     tick();
     tid = setInterval(tick, 1000);
     timerEl.dataset.tid = String(tid);
 }
+
 
 function hideTimerAndUi() {
     const timerEl = $qs("#timer");
@@ -342,7 +403,6 @@ function hideTimerAndUi() {
 function pluralizePeople(n) {
     if (n === 0) return "0 человек";
     if (n === 1) return "1 человек";
-    // простая форма: 2-4 -> "2 человека", else "n человек"
     const rem10 = n % 10;
     if (rem10 >= 2 && rem10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14)) return `${n} человека`;
     return `${n} человек`;
@@ -358,9 +418,12 @@ async function fetchNearbyAndRender(tg_id, lat, lon, radius_km = 3.0) {
         if (!res.ok) throw new Error("nearby fetch failed " + res.status);
         const data = await res.json();
         const items = data.nearby || [];
+
         // update title
         const txt = `Рядом - ${pluralizePeople(items.length)} готовы обедать`;
         countEl.textContent = txt;
+        countEl.classList.add("nearby-count--spaced");
+
         // render cards
         cards.innerHTML = "";
         if (items.length === 0) {
@@ -379,16 +442,13 @@ async function fetchNearbyAndRender(tg_id, lat, lon, radius_km = 3.0) {
 }
 
 function formatDistance(p) {
-    // p.distance_km может быть числом или строкой
     const d = Number(p.distance_km);
     if (!isFinite(d) || d <= 0) return "";
     if (d < 1) {
         return `${Math.round(d * 1000)} м`;
     } else if (d < 10) {
-        // одна десятичная точность для ближайших километров
         return `${(Math.round(d * 10) / 10).toFixed(1)} км`;
     } else {
-        // цельные километры для дальних
         return `${Math.round(d)} км`;
     }
 }

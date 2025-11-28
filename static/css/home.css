@@ -125,7 +125,7 @@ p.soon-text {
 
 .interest-card{
   flex: 0 0 46%;
-  min-width: 200px;
+  min-width: 220px;
   background: var(--card);
   border-radius: 12px;
   padding: 10px;
