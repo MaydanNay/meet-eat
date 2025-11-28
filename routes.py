@@ -138,12 +138,12 @@ async def dispatch_surveys_once():
             try:
                 # initiator
                 if r["from_tg"]:
-                    text = f'Сходили ли вы с "{r["to_name"]}" в "{r["place_name"]}"?'
+                    text = f'Сходили ли вы с "{r["to_name"]}" в "{r["meal_type"]}"?'
                     # await send_telegram_message(r["from_tg"], text, reply_markup=telegram_survey_keyboard(invite_id))
                     await send_telegram_message(r["from_tg"], text)
                 # responder
                 if r["to_tg"]:
-                    text2 = f'Сходили ли вы с "{r["from_name"]}" в "{r["place_name"]}"?'
+                    text2 = f'Сходили ли вы с "{r["from_name"]}" в "{r["meal_type"]}"?'
                     # await send_telegram_message(r["to_tg"], text2, reply_markup=telegram_survey_keyboard(invite_id))
                     await send_telegram_message(r["to_tg"], text2)
             except Exception:
