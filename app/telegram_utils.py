@@ -11,7 +11,7 @@ from routes import DB_PATH
 from app.config import BOT_TOKEN
 
 import socket
-# (вверху модуля уже есть imports)
+
 # helper - try to use shared session if available
 async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = None, sess: aiohttp.ClientSession = None):
     if not BOT_TOKEN:
@@ -161,7 +161,6 @@ async def dispatch_surveys_once():
                 cur_changes = await db.execute("SELECT changes() AS cnt")
                 ch = await cur_changes.fetchone()
                 if not ch or int(ch["cnt"]) == 0:
-                    # кто-то другой уже пометил — пропускаем
                     continue
             except Exception:
                 logging.exception("failed to mark survey_sent for invite %s", invite_id)
@@ -190,8 +189,8 @@ async def dispatch_surveys_once():
             from_display = r.get("from_name") or (("@%s" % r.get("from_tg")) if r.get("from_tg") else "пользователь")
             to_display = r.get("to_name") or (("@%s" % r.get("to_tg")) if r.get("to_tg") else "пользователь")
 
-            text_for_from = f'Сходили ли вы с "{to_display}" {meal_type}{place_text}?'
-            text_for_to   = f'Сходили ли вы с "{from_display}" {meal_type}{place_text}?'
+            text_for_from = f'Сходили ли вы с "{to_display}" на {meal_type}{place_text}?Зайдите в мини-апп и ответься пожалуйста))'
+            text_for_to   = f'Сходили ли вы с "{from_display}" на {meal_type}{place_text}?\nЗайдите в мини-апп и ответься пожалуйста))'
 
             # вставляем notifications в БД (initiator и responder)
             try:

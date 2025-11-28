@@ -1190,10 +1190,22 @@ async function fetchNotifications() {
     }
 }
 
+function safePayload(notif) {
+    let pl = notif && notif.payload ? notif.payload : {};
+    if (typeof pl === 'string') {
+        try { pl = JSON.parse(pl); } catch(e) { console.warn("safePayload: payload parse failed", e, pl); pl = {raw: pl}; }
+    }
+    return pl;
+}
+
+
 function openNotificationModal(notif) {
     if (!notif) return;
 
-    const payload = notif.payload || {};
+    const payload = safePayload(notif);
+    console.log("[openNotificationModal] decoded payload:", payload);
+
+    
     const container = $qs("#screenModals") || (function(){ const c = document.createElement("div"); c.id = "screenModals"; document.body.appendChild(c); return c; })();
     const id = `notif_${notif.id}_${String(Math.random()).slice(2)}`;
     const prev = container.querySelector('#' + id);
@@ -1244,7 +1256,7 @@ function openNotificationModal(notif) {
     // survey followup (prompt to leave review)
     if (notif.type === "survey_followup") {
         const partner = payload.partner_name || "пользователь";
-        const prompt = payload.prompt || `Оставьте отзыв об ${partner}`;
+        const prompt = payload.prompt || `Оставьте отзыв об ${partner} в нашем мини-аппе`;
         const reactions = payload.reactions || [];
         modal.innerHTML = `
         <div class="modal-overlay"></div>
@@ -1333,9 +1345,13 @@ function openNotificationModal(notif) {
 }
 
 async function pollNotificationsOnce() {
+    console.log("[pollNotificationsOnce] start; tg=", getTgId && getTgId());
+
     try {
         const notifs = await fetchNotifications();
         if (!Array.isArray(notifs) || notifs.length === 0) return;
+        console.log("[pollNotificationsOnce] got notifs:", notifs);
+
 
         // Игнорируем те, что уже прочитаны на сервере, и те, что уже показаны в этой сессии
         const unread = notifs.filter(n => !n.read && !seenNotifIds.has(n.id));

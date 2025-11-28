@@ -264,19 +264,19 @@ async def api_survey_respond(request: Request):
 
         # отправляем follow-up либо сообщение "Ничего страшного"
         if answer == "yes":
-            # создаём notification prompting to leave review (mini-app)
             payload = {
                 "invite_id": invite_id,
                 "partner_name": partner_name,
                 "place_name": inv["place_name"],
                 "partner_tg": partner_tg,
-                "prompt": f'Супер, оставьте отзыв об пользователе "{partner_name}"',
+                "prompt": f'Супер, оставьте отзыв об пользователе "{partner_name}" в нашем мини-аппе',
                 "reactions": ALLOWED_REACTIONS
             }
             await db.execute(
                 "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
                 (user_id, "survey_followup", json.dumps(payload, ensure_ascii=False))
             )
+            await db.commit()
 
             # optional: send Telegram with reaction buttons (callback_data: review:<invite_id>:<reaction>)
             if partner_tg:
@@ -513,9 +513,9 @@ async def api_invite(request: Request):
         # сообщение — добавляем только если есть и не пустое
         msg = body.get("message")
         if msg:
-            text = f"У вас новое приглашение{place_text} от {from_display} на {meal} {when_part}.\n\nСообщение: {msg}"
+            text = f"У вас новое приглашение{place_text} от {from_display} на {meal} {when_part}.\n\nСообщение от пригласившего: {msg}\n\nЗайдите в наш мини-апп, чтобы ответить на приглашение"
         else:
-            text = f"У вас новое приглашение{place_text} от {from_display} на {meal} {when_part}."
+            text = f"У вас новое приглашение{place_text} от {from_display} на {meal} {when_part}.\n\nЗайдите в наш мини-апп, чтобы ответить на приглашение"
 
         # inline keyboard with callback_data
         # keyboard_buttons = [
@@ -604,7 +604,7 @@ async def handle_survey_response(invite_id: int, responder_tg: int, ans: str):
                 "partner_name": partner_name,
                 "partner_tg": partner_tg,
                 "place_name": inv["place_name"],
-                "prompt": f'Супер, оставьте отзыв об пользователе "{partner_name}"',
+                "prompt": f'Супер, оставьте отзыв об пользователе "{partner_name}" в нашем мини-аппе',
                 "reactions": ALLOWED_REACTIONS
             }
 
@@ -613,6 +613,7 @@ async def handle_survey_response(invite_id: int, responder_tg: int, ans: str):
                 (user_id, "survey_followup", json.dumps(payload, ensure_ascii=False))
             )
             await db.commit()
+
             # send telegram with reaction buttons to the user who answered
             try:
                 # kb = {"inline_keyboard": [[{"text": r, "callback_data": f"review:{invite_id}:{r}"}] for r in ALLOWED_REACTIONS]}
