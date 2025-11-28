@@ -2,154 +2,26 @@
 
 import os
 import math
-from zoneinfo import ZoneInfo
-import aiohttp 
+import json
+import asyncio
 import logging
 import aiosqlite
 import hmac, hashlib
+from zoneinfo import ZoneInfo
 from urllib.parse import parse_qsl
 from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Request
 
+from app.config import BOT_TOKEN, DB_PATH
+from app.invites import handle_invite_response
+from app.telegram_utils import answer_callback_query, dispatch_surveys_once, edit_message_reply_markup, edit_message_text, send_telegram_message
 from places import safe_avatar_url, places_router
 from screens import safe_screen_template
-from utils import haversine_km, now_iso, parse_float, parse_int
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-log = logging.getLogger("meet_eat")
+from utils import haversine_km, parse_float, parse_int
 
 router = APIRouter()
-
-import asyncio
-import json
-
-
-async def edit_message_reply_markup(chat_id: int = None, message_id: int = None, inline_message_id: str = None, reply_markup: dict = None):
-    if not BOT_TOKEN:
-        return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageReplyMarkup"
-    payload = {}
-    if chat_id is not None and message_id is not None:
-        payload["chat_id"] = chat_id
-        payload["message_id"] = message_id
-    elif inline_message_id is not None:
-        payload["inline_message_id"] = inline_message_id
-    if reply_markup is not None:
-        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-    try:
-        async with aiohttp.ClientSession() as sess:
-            await sess.post(url, json=payload, timeout=5)
-    except Exception:
-        logging.exception("editMessageReplyMarkup failed")
-
-
-async def edit_message_text(chat_id: int = None, message_id: int = None, inline_message_id: str = None, text: str = None):
-    if not BOT_TOKEN:
-        return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
-    payload = {"parse_mode": "HTML"}
-    if chat_id is not None and message_id is not None:
-        payload["chat_id"] = chat_id
-        payload["message_id"] = message_id
-    elif inline_message_id is not None:
-        payload["inline_message_id"] = inline_message_id
-    payload["text"] = text or ""
-    try:
-        async with aiohttp.ClientSession() as sess:
-            await sess.post(url, json=payload, timeout=5)
-    except Exception:
-        logging.exception("editMessageText failed")
-
-
-
-# helper — формирует телеграм inline keyboard (Yes/No)
-# def telegram_survey_keyboard(invite_id):
-#     return {
-#         "inline_keyboard": [
-#             [{"text":"Да","callback_data": f"survey:{invite_id}:yes"}],
-#             [{"text":"Нет","callback_data": f"survey:{invite_id}:no"}]
-#         ]
-#     }
-
-async def dispatch_surveys_once():
-    """Ищет accepted invites с ответом >=1 час назад и survey_sent=0, создает notifications и отправляет telegram."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        
-        # выбираем все приглашения, принятые >= 1 час назад и для которых опрос ещё не отправлен
-        cur = await db.execute("""
-            SELECT i.id, i.from_user_id, i.to_user_id, i.place_name, i.responded_at,
-                fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
-            FROM invites i
-            JOIN users fu ON fu.id = i.from_user_id
-            JOIN users tu ON tu.id = i.to_user_id
-            WHERE i.status = 'accepted' AND IFNULL(i.survey_sent,0) = 0
-                AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-10 seconds')
-        """)
-            #   AND datetime(i.responded_at) <= datetime('now', '-1 hour')
-        rows = await cur.fetchall()
-        if not rows:
-            return
-
-        for r in rows:
-            invite_id = r["id"]
-
-            # пытаемся пометить invite как отправленный (только если ещё не помечен)
-            await db.execute("UPDATE invites SET survey_sent = 1 WHERE id = ? AND IFNULL(survey_sent,0) = 0", (invite_id,))
-            await db.commit()
-            cur_changes = await db.execute("SELECT changes() AS cnt")
-            ch = await cur_changes.fetchone()
-            if not ch or int(ch["cnt"]) == 0:
-                continue
-
-            # payload для уведомления в мини-аппе
-            # отправим каждому участнику персонализованный payload
-            # payload_from => инициатор (отправителю оповещения о том, что нужно ответить)
-            payload_from = {
-                "invite_id": invite_id,
-                "place_name": r["place_name"],
-                "partner_name": r["to_name"],
-                "partner_tg": r["to_tg"],
-                "role": "initiator"
-            }
-            payload_to = {
-                "invite_id": invite_id,
-                "place_name": r["place_name"],
-                "partner_name": r["from_name"],
-                "partner_tg": r["from_tg"],
-                "role": "responder"
-            }
-
-            # вставляем в таблицу notifications (инициатор)
-            await db.execute(
-                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
-                (r["from_user_id"], "survey", json.dumps(payload_from, ensure_ascii=False))
-            )
-            # для респондента
-            await db.execute(
-                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
-                (r["to_user_id"], "survey", json.dumps(payload_to, ensure_ascii=False))
-            )
-            await db.commit()
-
-            # попробуем отправить Telegram (best-effort)
-            try:
-                # initiator
-                if r["from_tg"]:
-                    text = f'Сходили ли вы с "{r["to_name"]}" в "{r["meal_type"]}"?'
-                    # await send_telegram_message(r["from_tg"], text, reply_markup=telegram_survey_keyboard(invite_id))
-                    await send_telegram_message(r["from_tg"], text)
-                # responder
-                if r["to_tg"]:
-                    text2 = f'Сходили ли вы с "{r["from_name"]}" в "{r["meal_type"]}"?'
-                    # await send_telegram_message(r["to_tg"], text2, reply_markup=telegram_survey_keyboard(invite_id))
-                    await send_telegram_message(r["to_tg"], text2)
-            except Exception:
-                logging.exception("survey send telegram failed for invite %s", invite_id)
-
-        await db.commit()
 
 async def survey_dispatcher_loop(
     poll_interval=2
@@ -169,22 +41,6 @@ async def survey_dispatcher_loop(
         logging.info("survey_dispatcher_loop cancelled, cleaning up")
         raise 
     
-# функция для прикрепления воркера к FastAPI app (вызвать из main)
-def attach_survey_worker(app):
-    @app.on_event("startup")
-    async def start_survey_worker():
-        app.state._survey_task = asyncio.create_task(survey_dispatcher_loop())
-
-    @app.on_event("shutdown")
-    async def stop_survey_worker():
-        t = getattr(app.state, "_survey_task", None)
-        if t:
-            t.cancel()
-
-
-
-
-
 ALLOWED_REACTIONS = [
     "Приятный собеседник",
     "Мыслит нестандартно",
@@ -212,235 +68,9 @@ PROJECT_ROOT = find_project_root(__file__, max_levels=5)
 STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
 TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
 SCREENS_TEMPLATES_DIR = os.path.join(TEMPLATES_DIR, "screens")
-
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-DB_PATH = "db.sqlite3"
-import hashlib, hmac
-BOT_TOKEN = "8430676291:AAFr9yilHXr2Fel35y297btCjln6N6cR7l8"
 secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
-
-
-SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "")
-
-import html as _html
-
-# async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = None):
-#     if not BOT_TOKEN:
-#         logging.warning("send_telegram_message: BOT_TOKEN not set")
-#         return None
-    
-#     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-#     # экранируем текст при parse_mode="HTML"
-#     safe_text = _html.escape(text)
-#     payload = {"chat_id": chat_id, "text": safe_text, "parse_mode": "HTML"}
-#     if reply_markup is not None:
-#         payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-#     try:
-#         async with aiohttp.ClientSession() as sess:
-#             async with sess.post(url, json=payload, timeout=10) as resp:
-#                 j = await resp.json()
-#                 if not j.get("ok"):
-#                     logging.warning("telegram send failed: %s", j)
-                
-#                 logging.info("telegram send response: %s", j)
-                
-#                 return j
-#     except Exception:
-#         logging.exception("send_telegram_message failed")
-#         return None
-
-# если будете передавать session извне — лучше. Но функция сама умеет создать сессию.
-async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = None, sess: aiohttp.ClientSession = None):
-    if not BOT_TOKEN:
-        logging.warning("send_telegram_message: BOT_TOKEN not set")
-        return None
-
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    safe_text = _html.escape(text)
-    payload = {"chat_id": chat_id, "text": safe_text, "parse_mode": "HTML"}
-    if reply_markup is not None:
-        # Telegram допускает либо объект либо строку JSON; сохраняем строку для совместимости
-        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-
-    created_session = False
-    try:
-        if sess is None:
-            sess = aiohttp.ClientSession()
-            created_session = True
-
-        # явная обработка таймаутов/отмен
-        try:
-            async with sess.post(url, json=payload, timeout=10) as resp:
-                j = await resp.json()
-                if not j.get("ok"):
-                    logging.warning("telegram send failed: %s", j)
-                logging.info("telegram send response: %s", j)
-                return j
-        except asyncio.CancelledError:
-            # во время shutdown — пробросим, чтобы caller корректно завершился
-            logging.info("send_telegram_message cancelled (shutdown)")
-            raise
-        except asyncio.TimeoutError:
-            logging.warning("send_telegram_message timeout for chat_id=%s", chat_id)
-            return None
-        except aiohttp.ClientError as e:
-            logging.error("send_telegram_message client error: %s", e)
-            return None
-
-    finally:
-        if created_session and sess is not None:
-            await sess.close()
-
-async def answer_callback_query(callback_query_id: str, text: str = None, show_alert: bool = False):
-    if not BOT_TOKEN:
-        return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery"
-    payload = {"callback_query_id": callback_query_id, "show_alert": bool(show_alert)}
-    if text:
-        payload["text"] = text
-    try:
-        async with aiohttp.ClientSession() as sess:
-            await sess.post(url, json=payload, timeout=5)
-    except Exception:
-        logging.exception("answerCallbackQuery failed")
-
-
-async def handle_invite_response(invite_id: int, responder_tg: int, action: str):
-    if action not in ("accept", "decline"):
-        raise ValueError("invalid action")
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT i.id, i.status, i.from_user_id, i.to_user_id, i.place_name, i.time_iso, i.meal_type, fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name "
-            "FROM invites i JOIN users fu ON fu.id = i.from_user_id JOIN users tu ON tu.id = i.to_user_id WHERE i.id = ?",
-            (invite_id,)
-        )
-        inv = await cur.fetchone()
-        if not inv:
-            return {"ok": False, "error": "invite not found"}
-       
-        # --- безопасная проверка: responder имеет право отвечать на это приглашение ---
-        try:
-            stored_to_tg = inv["to_tg"]
-        except Exception:
-            stored_to_tg = None
-
-        # Если в БД нет to_tg или он не совпадает с приславшим запрос — отказ
-        try:
-            if stored_to_tg is None or int(stored_to_tg) != int(responder_tg):
-                return {"ok": False, "error": "not authorized"}
-        except Exception:
-            return {"ok": False, "error": "not authorized"}
-
-        if inv["status"] != "pending":
-            return {"ok": False, "error": f"already {inv['status']}"}
-
-        new_status = "accepted" if action == "accept" else "declined"
-        # now_s = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-
-        # найдем responder_user_id
-        cur = await db.execute("SELECT id, name, username, tg_id FROM users WHERE tg_id = ?", (responder_tg,))
-        r = await cur.fetchone()
-        responder_user_id = r["id"] if r else None
-        responder_name = None
-        responder_username = None
-        if r:
-            responder_name = r["name"] or None
-            responder_username = (r["username"] or None)
-
-        # await db.execute(
-        #     "UPDATE invites SET status = ?, responder_user_id = ?, responded_at = ?, updated_at = ? WHERE id = ?",
-        #     (new_status, responder_user_id, now_s, now_s, invite_id))
-        # await db.commit()
-        await db.execute(
-            "UPDATE invites SET status = ?, responder_user_id = ?, responded_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
-            (new_status, responder_user_id, invite_id))
-        await db.commit()
-
-        # --- подготовка читаемого времени (Asia/Almaty) ---
-        time_readable = ""
-        raw_time = inv["time_iso"]
-        if raw_time:
-            try:
-                t = raw_time
-                if t.endswith("Z"):
-                    t = t[:-1]
-                try:
-                    dt = datetime.fromisoformat(t)
-                except Exception:
-                    dt = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S.%fZ")
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                try:
-                    almaty = ZoneInfo("Asia/Almaty")
-                    dt_local = dt.astimezone(almaty)
-                except Exception:
-                    dt_local = dt.astimezone(timezone.utc)
-                ru_months = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"]
-                hhmm = dt_local.strftime("%H:%M")
-                day = dt_local.day
-                month = ru_months[dt_local.month - 1]
-                time_readable = f"{hhmm} {day} {month}"
-            except Exception:
-                logging.exception("time parse failed")
-
-        # --- Формирование текста уведомления для инициатора ---
-        place_text = f' в "{inv["place_name"]}"' if inv["place_name"] else ""
-        meal_type = inv["meal_type"] or "встречу"
-
-        status_text = "принято" if new_status == "accepted" else "отказано"
-        emojis = "🥳🥳🥳" if new_status == "accepted" else "😭😭😭"
-
-        # responder_display = responder_name or ("@" + str(responder_tg)) if responder_tg else "пользователь"
-        if responder_name:
-            responder_display = responder_name
-        elif responder_username:
-            responder_display = "@" + str(responder_username)
-        elif responder_tg:
-            responder_display = "@" + str(responder_tg)
-        else:
-            responder_display = "пользователь"
-
-        when_part = f"в {time_readable}" if time_readable else (f"в {inv['time_iso']}" if inv["time_iso"] else "")
-
-        # При принятии добавляем отдельную строку с username (если есть) — как просил
-        contact_line = ""
-        if new_status == "accepted":
-            if responder_username:
-                contact_line = f"\n\nСвяжись с @{responder_username}"
-            elif responder_tg:
-                contact_line = f"\n\nСвяжись с @{responder_tg}"
-
-        telegram_text = f'Ваше приглашение{place_text} с {responder_display} на {meal_type} {when_part} было {status_text} {emojis}{contact_line}'
-
-        # Отправим Telegram (best-effort)
-        try:
-            await send_telegram_message(inv["from_tg"], telegram_text)
-        except Exception:
-            logging.exception("failed to send telegram notify to initiator")
-
-        # --- Создадим запись в notifications для мини-аппа инициатора ---
-        notif_payload = {
-            "invite_id": invite_id,
-            "place_name": inv["place_name"],
-            "meal_type": meal_type,
-            "time_readable": time_readable,
-            "responder_name": responder_display,
-            "status": new_status
-        }
-        try:
-            await db.execute(
-                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
-                (inv["from_user_id"], "invite_response", json.dumps(notif_payload, ensure_ascii=False))
-            )
-            await db.commit()
-        except Exception:
-            logging.exception("failed to insert notification")
-
-        return {"ok": True, "invite_id": invite_id, "status": new_status}
-
 
 
 places_router(router, DB_PATH, templates)
@@ -471,16 +101,10 @@ async def start_session(request: Request):
     lat = parse_float(data["lat"], "lat")
     lon = parse_float(data["lon"], "lon")
 
-    # now = datetime.now(timezone.utc)
-    # expires = now + timedelta(hours=1)
-    # now_s = now.isoformat()
-    # expires_s = expires.isoformat()
-
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=1)
     now_s = now.strftime('%Y-%m-%d %H:%M:%S')
     expires_s = expires.strftime('%Y-%m-%d %H:%M:%S')
-
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -501,6 +125,7 @@ async def start_session(request: Request):
         await db.commit()
 
     return {"status": "ok", "expires_at": expires_s}
+
 
 @router.post("/stop")
 async def stop_session(request: Request):
@@ -860,17 +485,19 @@ async def api_invite(request: Request):
                 try:
                     dt = datetime.fromisoformat(t)
                 except Exception:
-                    # fallback: общий формат с миллисекундами
                     dt = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S.%fZ")
+
                 # если dt naive — считаем что это UTC
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
+
                 # переводим в Asia/Almaty
                 try:
                     almaty = ZoneInfo("Asia/Almaty")
                     dt_local = dt.astimezone(almaty)
                 except Exception:
                     dt_local = dt.astimezone(timezone.utc)
+
                 # читаем месяц по-русски через ручную карту (надёжно)
                 ru_months = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"]
                 hhmm = dt_local.strftime("%H:%M")
@@ -1540,6 +1167,7 @@ async def handle_review_from_survey(invite_id: int, reviewer_tg: int, reaction: 
         inv = await cur.fetchone()
         if not inv:
             return {"ok": False, "error": "invite not found"}
+        
         # определить target (если reviewer == from_user -> target = to_user_id и наоборот)
         cur = await db.execute("SELECT id FROM users WHERE tg_id = ?", (reviewer_tg,))
         r = await cur.fetchone()
@@ -1601,7 +1229,6 @@ async def telegram_webhook(request: Request):
                     logging.exception("failed to update invite message after callback")
 
             if data_str.startswith("survey:"):
-                # формат: survey:<invite_id>:<answer>
                 _, sid, ans = data_str.split(":", 2)
                 iid = int(sid)
                 if ans not in ("yes", "no"):
@@ -1630,7 +1257,6 @@ async def telegram_webhook(request: Request):
 
 
             if data_str.startswith("review:"):
-                # формат: review:<invite_id>:<reaction_label>
                 _, sid, reaction = data_str.split(":", 2)
                 iid = int(sid)
                 res = await handle_review_from_survey(iid, tg_user_id, reaction)
