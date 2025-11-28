@@ -62,15 +62,15 @@ async function openInviteModal(toTgId) {
         </div>
 
         <label for="inviteTime" style="display:block;margin-bottom:6px;font-weight:600">Время</label>
-        <input id="inviteTime" type="datetime-local" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);margin-bottom:12px;" />
+        <input id="inviteTime" type="datetime-local" style="width:90%;padding:10px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);margin-bottom:12px;" />
 
         <label for="invitePlace" style="display:block;margin-bottom:6px;font-weight:600">Место</label>
-        <select id="invitePlace" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);margin-bottom:12px;">
+        <select id="invitePlace" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);margin-bottom:12px;">
           <option value="">- Не указано -</option>
         </select>
 
         <label for="inviteMessage" style="display:block;margin-bottom:6px;font-weight:600">Сообщение (необязательно)</label>
-        <textarea id="inviteMessage" rows="4" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);margin-bottom:12px;" placeholder="Например: Давай выпьем кофе в 16:00 у входа"></textarea>
+        <textarea id="inviteMessage" rows="4" style="width:90%;padding:10px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);margin-bottom:12px;" placeholder="Например: Давай выпьем кофе в 16:00 у входа"></textarea>
 
         <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;">
           <button id="inviteCancel" class="btn">Отмена</button>
