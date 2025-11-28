@@ -23,10 +23,7 @@ from utils import haversine_km, parse_float, parse_int
 
 router = APIRouter()
 
-async def survey_dispatcher_loop(
-    poll_interval=2
-    # poll_interval=60
-):
+async def survey_dispatcher_loop(poll_interval=60):
     try:
         await asyncio.sleep(5)
         while True:
@@ -157,7 +154,6 @@ async def nearby(tg_id: int, lat: float, lon: float, radius_km: float = 3.0, max
     min_lon, max_lon = lon - lon_deg, lon + lon_deg
 
     now_s = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    # now_s = now_iso()
     items = []
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -278,7 +274,6 @@ async def api_survey_respond(request: Request):
             )
             await db.commit()
 
-            # optional: send Telegram with reaction buttons (callback_data: review:<invite_id>:<reaction>)
             if partner_tg:
                 try:
                     # Для Telegram - отправляем пользователю который ответил (not partner)
@@ -289,13 +284,11 @@ async def api_survey_respond(request: Request):
                     logging.exception("telegram send followup failed")
             return {"ok": True, "action": "ask_review"}
         else:
-            # answer == 'no'
             payload = {"message": f'Ничего страшного - найдете другого.'}
             await db.execute("INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
                              (user_id, "survey_negative", json.dumps(payload, ensure_ascii=False)))
             await db.commit()
             
-            # optionally notify via telegram
             try:
                 await send_telegram_message(tg_id, payload["message"])
             except Exception:

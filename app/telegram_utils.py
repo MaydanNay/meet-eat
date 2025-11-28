@@ -137,14 +137,23 @@ async def dispatch_surveys_once():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
+        # cur = await db.execute("""
+        #     SELECT i.id, i.from_user_id, i.to_user_id, i.place_name, i.responded_at, i.meal_type,
+        #            fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
+        #     FROM invites i
+        #     JOIN users fu ON fu.id = i.from_user_id
+        #     JOIN users tu ON tu.id = i.to_user_id
+        #     WHERE i.status = 'accepted' AND IFNULL(i.survey_sent,0) = 0
+        #       AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-10 seconds')
+        # """)
         cur = await db.execute("""
             SELECT i.id, i.from_user_id, i.to_user_id, i.place_name, i.responded_at, i.meal_type,
-                   fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
+                fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
             FROM invites i
             JOIN users fu ON fu.id = i.from_user_id
             JOIN users tu ON tu.id = i.to_user_id
             WHERE i.status = 'accepted' AND IFNULL(i.survey_sent,0) = 0
-              AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-10 seconds')
+            AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-1 hour')
         """)
         rows = await cur.fetchall()
         if not rows:
