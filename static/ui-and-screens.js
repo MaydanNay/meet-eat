@@ -1460,6 +1460,180 @@ window.addEventListener("popstate", (e) => {
     loadScreen(s);
 });
 
+// --- START: base modals creation + helpers (paste into ui-and-screens.js) ---
+
+// Создаёт статические модалки, если их нет (альтернатива вставке HTML в шаблон)
+function ensureBaseModals() {
+  if (!$qs("#screenModals")) {
+    const c = document.createElement("div"); c.id = "screenModals"; document.body.appendChild(c);
+  }
+  const container = $qs("#screenModals");
+
+  // tagModal skeleton
+  if (!container.querySelector("#tagModal")) {
+    container.insertAdjacentHTML("beforeend", `
+      <div id="tagModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="tagModalTitle">
+          <div class="modal-header">
+            <div><div class="m-title" id="tagModalTitle">Теги</div><div class="m-sub">Выберите теги или добавьте собственный</div></div>
+          </div>
+          <div class="modal-body" style="flex-direction:column;gap:12px">
+            <div id="tagModalList" class="tag-list" style="max-height:40vh;overflow:auto;padding:6px 0"></div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
+              <input id="tagModalNewInput" type="text" placeholder="Добавить тег" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.08)" />
+              <button id="tagModalAdd" class="btn">Добавить</button>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button id="tagModalCancel" class="btn outline">Отмена</button>
+            <button id="tagModalSave" class="btn primary">Сохранить</button>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // reviewModal skeleton
+  if (!container.querySelector("#reviewModal")) {
+    container.insertAdjacentHTML("beforeend", `
+      <div id="reviewModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="reviewModalTitle">
+          <div class="modal-header">
+            <img id="reviewTargetAvatar" class="m-avatar" src="/static/images/default_avatar.svg" alt="" />
+            <div><div class="m-title" id="reviewModalTitle">Оставить отзыв</div><div class="m-sub" id="reviewTargetName">Пользователь</div></div>
+          </div>
+          <div class="modal-body" style="flex-direction:column;gap:12px">
+            <div id="reviewReactions" class="reactions-wrap"></div>
+            <textarea id="reviewComment" rows="3" placeholder="Комментарий (необязательно)" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.08)"></textarea>
+          </div>
+          <div class="modal-actions">
+            <button id="reviewModalCancel" class="btn outline">Отмена</button>
+            <button id="reviewModalSend" class="btn primary">Отправить</button>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // простая логика add/cancel для tagModal (если openTagModal будет использован, он перезапишет list)
+  const tagAdd = $qs("#tagModalAdd");
+  if (tagAdd && !tagAdd._bound) {
+    tagAdd._bound = true;
+    tagAdd.addEventListener("click", (e) => {
+      e.preventDefault();
+      const input = $qs("#tagModalNewInput");
+      const val = input && input.value.trim();
+      if (!val) return input.focus();
+      const normalized = String(val).toLowerCase().replace(/\s+/g, ' ').slice(0,64);
+      // если такой уже есть — пометить/выделить
+      const existing = Array.from($qs("#tagModalList").querySelectorAll(".tag")).find(n => (n.dataset.value||"") === normalized);
+      if (existing) {
+        existing.classList.add("selected");
+      } else {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tag selected";
+        btn.dataset.value = normalized;
+        btn.textContent = normalized[0].toUpperCase() + normalized.slice(1);
+        btn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          btn.classList.toggle("selected");
+        });
+        $qs("#tagModalList").appendChild(btn);
+      }
+      input.value = "";
+      input.focus();
+    });
+  }
+
+  // cancel handler for tagModal
+  const tagCancel = $qs("#tagModalCancel");
+  if (tagCancel && !tagCancel._bound) {
+    tagCancel._bound = true;
+    tagCancel.addEventListener("click", (e) => {
+      e.preventDefault();
+      const m = $qs("#tagModal");
+      if (m) { m.classList.add("hidden"); m.setAttribute("aria-hidden", "true"); }
+    });
+    const overlay = $qs("#tagModal .modal-overlay");
+    if (overlay) overlay.addEventListener("click", () => { const m = $qs("#tagModal"); if (m) { m.classList.add("hidden"); m.setAttribute("aria-hidden","true"); }});
+  }
+
+  // review modal handlers
+  const revCancel = $qs("#reviewModalCancel");
+  if (revCancel && !revCancel._bound) {
+    revCancel._bound = true;
+    revCancel.addEventListener("click", (e) => {
+      e.preventDefault(); const m = $qs("#reviewModal"); if (m) { m.classList.add("hidden"); m.setAttribute("aria-hidden","true"); }
+    });
+    const overlay = $qs("#reviewModal .modal-overlay");
+    if (overlay) overlay.addEventListener("click", () => { const m = $qs("#reviewModal"); if (m) { m.classList.add("hidden"); m.setAttribute("aria-hidden","true"); }});
+  }
+}
+
+// Открывает review modal (универсальный): targetTg — tg_id цели, partnerName — имя, partnerAvatar — url
+async function openReviewModal(targetTg, partnerName = "Пользователь", partnerAvatar = "/static/images/default_avatar.svg", reactionsList = reactions) {
+  ensureBaseModals();
+  const m = $qs("#reviewModal");
+  if (!m) return alert("review modal not found");
+  $qs("#reviewTargetName").textContent = partnerName;
+  $qs("#reviewTargetAvatar").src = partnerAvatar || "/static/images/default_avatar.svg";
+  const wrap = $qs("#reviewReactions");
+  wrap.innerHTML = "";
+  let selected = null;
+
+  // render reactions (use provided reactionsList: array of {label, emoji} or strings)
+  for (const r of reactionsList) {
+    const label = (typeof r === "string") ? r : (r.label || String(r));
+    const emoji = (typeof r === "object" && r.emoji) ? r.emoji : "";
+    const item = document.createElement("div");
+    item.className = "reaction-item";
+    item.dataset.reaction = label;
+    item.innerHTML = `<div class="reaction-emoji">${emoji}</div><div class="reaction-label">${escapeHtml(label)}</div>`;
+    item.addEventListener("click", () => {
+      // single select
+      selected = label;
+      Array.from(wrap.querySelectorAll(".reaction-item")).forEach(n => n.classList.toggle("selected", n === item));
+    });
+    wrap.appendChild(item);
+  }
+
+  // send handler
+  const sendBtn = $qs("#reviewModalSend");
+  sendBtn.onclick = async () => {
+    const tg = getTgId();
+    if (!tg) return alert("Войдите через Telegram");
+    if (!selected) return alert("Выберите реакцию");
+    try {
+      sendBtn.disabled = true;
+      const resp = await postJson("/api/review/toggle", { reviewer_tg_id: tg, target_tg_id: targetTg, reaction: selected });
+      if (!resp || !resp.ok) throw new Error((resp && resp.error) ? resp.error : "server error");
+      alert("Спасибо — отзыв сохранён");
+      const modal = $qs("#reviewModal");
+      if (modal) { modal.classList.add("hidden"); modal.setAttribute("aria-hidden","true"); }
+    } catch (e) {
+      console.error("review send failed", e);
+      alert("Ошибка отправки отзыва: " + (e.message || e));
+    } finally {
+      sendBtn.disabled = false;
+    }
+  };
+
+  // show
+  m.classList.remove("hidden");
+  m.setAttribute("aria-hidden","false");
+  setTimeout(() => { const first = wrap.querySelector(".reaction-item"); if (first) first.focus(); }, 20);
+}
+
+// Вызови ensureBaseModals() при инициализации страницы
+document.addEventListener("DOMContentLoaded", () => {
+  try { ensureBaseModals(); } catch (e) { console.warn("ensureBaseModals failed", e); }
+});
+
+// --- END: base modals creation + helpers ---
+
 export {
     renderPersonCard, renderInterestCard, fetchSimilarAndRender,
     fetchReviewsFor, renderRecentReviews,
