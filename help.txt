@@ -10,4 +10,10 @@ git push -u origin master
 # Сервер
 cd /srv/myapp-dev/meet-eat
 git pull origin master
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8001
+
+
+
+
+sudo kill 710
+sudo ss -ltnp | grep 8001

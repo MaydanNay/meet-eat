@@ -1,6 +1,8 @@
 # main.py
 
+import logging
 import asyncio
+import aiohttp
 import aiosqlite
 from utils import now_iso
 from fastapi import FastAPI, Request
@@ -157,38 +159,67 @@ async def cleanup_task(stop_event: asyncio.Event):
                     )
                     await db.commit()
             except Exception as e:
-                print("cleanup error:", e)
-            await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+                logger = logging.getLogger("root")
+                logger.exception("cleanup_task: db update failed: %s", e)
+
+            # ждём либо событие стопа, либо таймаут — но таймаут не должен завершать таск с ошибкой
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=60.0)
+            except asyncio.TimeoutError:
+                # просто продолжим цикл и снова проверим БД
+                continue
     except asyncio.CancelledError:
-        pass
+        # ожидаемо при shutdown
+        logger = logging.getLogger("root")
+        logger.info("cleanup_task cancelled")
+        return
 
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # инициализация БД
     await init_db()
+
+    # глобальная http сессия для всего приложения (для Telegram и других запросов)
+    app.state.http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=50))
+
     stop_event = asyncio.Event()
 
+    # один cleanup таск
     cleanup_t = asyncio.create_task(cleanup_task(stop_event))
-    # start survey worker here to make it unambiguous and single-process
-    survey_task = asyncio.create_task(survey_dispatcher_loop())
-    app.state._survey_task = survey_task
 
-    task = asyncio.create_task(cleanup_task(stop_event))
+    # стартуем survey worker; если survey_dispatcher_loop требует args — передайте их
+    survey_task = asyncio.create_task(survey_dispatcher_loop())
+
+    app.state._survey_task = survey_task
+    app.state._cleanup_task = cleanup_t
+
     try:
         yield
     finally:
+        # начинаем аккуратный shutdown
         stop_event.set()
-        cleanup_t.cancel()
-        survey_task.cancel()
+
+        # отменяем таски и ждём их завершения аккуратно
+        for t in (cleanup_t, survey_task):
+            t.cancel()
+
+        # дождёмся с обработкой CancelledError
+        for t in (cleanup_t, survey_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                logging.info("Task %s cancelled", t.get_name() if hasattr(t, "get_name") else t)
+            except Exception:
+                logging.exception("Error awaiting task %s during shutdown", t)
+
+        # закроем http сессию
         try:
-            await cleanup_t
+            await app.state.http_session.close()
         except Exception:
-            pass
-        try:
-            await survey_task
-        except Exception:
-            pass
+            logging.exception("Error closing http_session")
+
 
 app = FastAPI(lifespan=lifespan, title="meet&eat")
 app.include_router(api_router)

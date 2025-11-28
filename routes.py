@@ -225,32 +225,73 @@ SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "")
 
 import html as _html
 
-async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = None):
+# async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = None):
+#     if not BOT_TOKEN:
+#         logging.warning("send_telegram_message: BOT_TOKEN not set")
+#         return None
+    
+#     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+#     # экранируем текст при parse_mode="HTML"
+#     safe_text = _html.escape(text)
+#     payload = {"chat_id": chat_id, "text": safe_text, "parse_mode": "HTML"}
+#     if reply_markup is not None:
+#         payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+#     try:
+#         async with aiohttp.ClientSession() as sess:
+#             async with sess.post(url, json=payload, timeout=10) as resp:
+#                 j = await resp.json()
+#                 if not j.get("ok"):
+#                     logging.warning("telegram send failed: %s", j)
+                
+#                 logging.info("telegram send response: %s", j)
+                
+#                 return j
+#     except Exception:
+#         logging.exception("send_telegram_message failed")
+#         return None
+
+# если будете передавать session извне — лучше. Но функция сама умеет создать сессию.
+async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = None, sess: aiohttp.ClientSession = None):
     if not BOT_TOKEN:
         logging.warning("send_telegram_message: BOT_TOKEN not set")
         return None
-    
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    # экранируем текст при parse_mode="HTML"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     safe_text = _html.escape(text)
     payload = {"chat_id": chat_id, "text": safe_text, "parse_mode": "HTML"}
     if reply_markup is not None:
+        # Telegram допускает либо объект либо строку JSON; сохраняем строку для совместимости
         payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+
+    created_session = False
     try:
-        async with aiohttp.ClientSession() as sess:
+        if sess is None:
+            sess = aiohttp.ClientSession()
+            created_session = True
+
+        # явная обработка таймаутов/отмен
+        try:
             async with sess.post(url, json=payload, timeout=10) as resp:
                 j = await resp.json()
                 if not j.get("ok"):
                     logging.warning("telegram send failed: %s", j)
-                
                 logging.info("telegram send response: %s", j)
-                
                 return j
-    except Exception:
-        logging.exception("send_telegram_message failed")
-        return None
+        except asyncio.CancelledError:
+            # во время shutdown — пробросим, чтобы caller корректно завершился
+            logging.info("send_telegram_message cancelled (shutdown)")
+            raise
+        except asyncio.TimeoutError:
+            logging.warning("send_telegram_message timeout for chat_id=%s", chat_id)
+            return None
+        except aiohttp.ClientError as e:
+            logging.error("send_telegram_message client error: %s", e)
+            return None
 
+    finally:
+        if created_session and sess is not None:
+            await sess.close()
 
 async def answer_callback_query(callback_query_id: str, text: str = None, show_alert: bool = False):
     if not BOT_TOKEN:
