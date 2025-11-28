@@ -20,7 +20,6 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = No
     safe_text = _html.escape(text)
     payload = {"chat_id": chat_id, "text": safe_text, "parse_mode": "HTML"}
     if reply_markup is not None:
-        # Telegram допускает либо объект либо строку JSON; сохраняем строку для совместимости
         payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
 
     created_session = False
@@ -29,31 +28,39 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: dict = No
             sess = aiohttp.ClientSession()
             created_session = True
 
-        # явная обработка таймаутов/отмен
-        try:
-            async with sess.post(url, json=payload, timeout=10) as resp:
-                j = await resp.json()
-                if not j.get("ok"):
-                    logging.warning("telegram send failed: %s", j)
-                logging.info("telegram send response: %s", j)
-                return j
-        except asyncio.CancelledError:
-            logging.info("send_telegram_message cancelled (shutdown)")
-            raise
-        except asyncio.TimeoutError:
-            logging.warning("send_telegram_message timeout for chat_id=%s", chat_id)
-            return None
-        except aiohttp.ClientError as e:
-            logging.error("send_telegram_message client error: %s", e)
-            return None
+        # внутри app/telegram_utils.py -> send_telegram_message
+        MAX_ATTEMPTS = 3
+        TIMEOUT = 15  # seconds
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                async with sess.post(url, json=payload, timeout=TIMEOUT) as resp:
+                    try:
+                        j = await resp.json()
+                    except Exception:
+                        j = {"ok": False, "http_status": resp.status}
+                    if not j.get("ok"):
+                        logging.warning("telegram send failed (chat=%s) resp=%s", chat_id, j)
+                    return j
+            except asyncio.TimeoutError:
+                logging.warning("send_telegram_message timeout for chat_id=%s attempt=%d", chat_id, attempt)
+                if attempt < MAX_ATTEMPTS:
+                    await asyncio.sleep(1.0 * attempt)
+                    continue
+                return None
+            except aiohttp.ClientError as e:
+                logging.warning("send_telegram_message client error for chat_id=%s: %s", chat_id, e)
+                return None
 
     finally:
         if created_session and sess is not None:
             await sess.close()
 
+
+
 async def answer_callback_query(callback_query_id: str, text: str = None, show_alert: bool = False):
     if not BOT_TOKEN:
         return
+    
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery"
     payload = {"callback_query_id": callback_query_id, "show_alert": bool(show_alert)}
     if text:
@@ -63,6 +70,7 @@ async def answer_callback_query(callback_query_id: str, text: str = None, show_a
             await sess.post(url, json=payload, timeout=5)
     except Exception:
         logging.exception("answerCallbackQuery failed")
+
 
         
 async def edit_message_reply_markup(chat_id: int = None, message_id: int = None, inline_message_id: str = None, reply_markup: dict = None):
@@ -143,19 +151,9 @@ async def dispatch_surveys_once():
             if not ch or int(ch["cnt"]) == 0:
                 continue
 
-            # безопасно достаём meal_type (Row может не содержать ключа)
-            try:
-                meal_type = r["meal_type"]
-            except Exception:
-                meal_type = None
-
-            # подготовим читаемый meal_text с запасным вариантом
-            meal_text = meal_type or "встречу"
-
             # payload для уведомления в мини-аппе
             # отправим каждому участнику персонализованный payload
             # payload_from => инициатор (отправителю оповещения о том, что нужно ответить)
-           
             payload_from = {
                 "invite_id": invite_id,
                 "place_name": r["place_name"],
@@ -183,21 +181,22 @@ async def dispatch_surveys_once():
             )
             await db.commit()
 
-            try:
-                text = f'Сходили ли вы с "{r["to_name"]}" {("в " + meal_text) if meal_text else ""}?'
-            except Exception:
-                text2 = f'Сходили ли вы с "{r.get("to_name") or "партнёром"}"?'
+            partner_from_name = r.get("from_name") or r.get("from_tg") or "партнёр"
+            partner_to_name = r.get("to_name") or r.get("to_tg") or "партнёр"
+            meal = (r.get("meal_type") or "встречу").strip()
+            place = r.get("place_name") or ""
+            place_part = f' в "{place}"' if place else ""
 
-            # попробуем отправить Telegram (best-effort)
+            # формируем строки для отправки каждому участнику
+            text_for_from = f'Сходили ли вы с "{partner_to_name}" {meal}{place_part}?'
+            text_for_to   = f'Сходили ли вы с "{partner_from_name}" {meal}{place_part}?'
+
+            # попытка пометить и отправить
             try:
-                # initiator
-                if r["from_tg"]:
-                    # await send_telegram_message(r["from_tg"], text, reply_markup=telegram_survey_keyboard(invite_id))
-                    await send_telegram_message(r["from_tg"], text)
-                # responder
-                if r["to_tg"]:
-                    # await send_telegram_message(r["to_tg"], text2, reply_markup=telegram_survey_keyboard(invite_id))
-                    await send_telegram_message(r["to_tg"], text2)
+                if r.get("from_tg"):
+                    await send_telegram_message(r["from_tg"], text_for_from)
+                if r.get("to_tg"):
+                    await send_telegram_message(r["to_tg"], text_for_to)
             except Exception:
                 logging.exception("survey send telegram failed for invite %s", invite_id)
 

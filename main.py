@@ -17,6 +17,10 @@ DB_PATH = "db.sqlite3"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL;")
+        await db.execute("PRAGMA busy_timeout = 5000;")  # ms
+        await db.commit()
+
         # users table (age may be added if missing)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (

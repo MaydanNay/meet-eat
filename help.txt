@@ -8,6 +8,7 @@ git push -u origin master
 
 
 # Сервер
+sudo -i
 cd /srv/myapp-dev/meet-eat
 git pull origin master
 uvicorn main:app --host 0.0.0.0 --port 8001
