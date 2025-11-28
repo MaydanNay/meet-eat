@@ -4,7 +4,7 @@ import logging
 import asyncio
 import aiohttp
 import aiosqlite
-from utils import now_iso
+from app.config import DB_PATH
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
@@ -13,7 +13,6 @@ from routes import router as api_router
 from routes import survey_dispatcher_loop
 
 
-DB_PATH = "db.sqlite3"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -170,7 +169,6 @@ async def cleanup_task(stop_event: asyncio.Event):
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=60.0)
             except asyncio.TimeoutError:
-                # просто продолжим цикл и снова проверим БД
                 continue
     except asyncio.CancelledError:
         # ожидаемо при shutdown
@@ -186,7 +184,8 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     # глобальная http сессия для всего приложения (для Telegram и других запросов)
-    app.state.http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=50))
+    import socket
+    app.state.http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=50, family=socket.AF_INET))
 
     stop_event = asyncio.Event()
 
