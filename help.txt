@@ -5,7 +5,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 # GitHub
 git add .
 git commit -m "m"
-git push -u origin main
+git push -u origin master
 
 
 
