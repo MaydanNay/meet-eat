@@ -120,84 +120,173 @@ async def edit_message_text(chat_id: int = None, message_id: int = None, inline_
 #         ]
 #     }
 
+# async def dispatch_surveys_once():
+#     """Ищет accepted invites с ответом >=1 час назад и survey_sent=0, создает notifications и отправляет telegram."""
+#     async with aiosqlite.connect(DB_PATH) as db:
+#         db.row_factory = aiosqlite.Row
+        
+#         # выбираем все приглашения, принятые >= 1 час назад и для которых опрос ещё не отправлен
+#         cur = await db.execute("""
+#             SELECT i.id, i.from_user_id, i.to_user_id, i.place_name, i.responded_at,
+#                 fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
+#             FROM invites i
+#             JOIN users fu ON fu.id = i.from_user_id
+#             JOIN users tu ON tu.id = i.to_user_id
+#             WHERE i.status = 'accepted' AND IFNULL(i.survey_sent,0) = 0
+#                 AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-10 seconds')
+#         """)
+#             #   AND datetime(i.responded_at) <= datetime('now', '-1 hour')
+#         rows = await cur.fetchall()
+#         if not rows:
+#             return
+
+#         for r in rows:
+#             invite_id = r["id"]
+
+#             # пытаемся пометить invite как отправленный (только если ещё не помечен)
+#             await db.execute("UPDATE invites SET survey_sent = 1 WHERE id = ? AND IFNULL(survey_sent,0) = 0", (invite_id,))
+#             await db.commit()
+#             cur_changes = await db.execute("SELECT changes() AS cnt")
+#             ch = await cur_changes.fetchone()
+#             if not ch or int(ch["cnt"]) == 0:
+#                 continue
+
+#             # payload для уведомления в мини-аппе
+#             # отправим каждому участнику персонализованный payload
+#             # payload_from => инициатор (отправителю оповещения о том, что нужно ответить)
+#             payload_from = {
+#                 "invite_id": invite_id,
+#                 "place_name": r["place_name"],
+#                 "partner_name": r["to_name"],
+#                 "partner_tg": r["to_tg"],
+#                 "role": "initiator"
+#             }
+#             payload_to = {
+#                 "invite_id": invite_id,
+#                 "place_name": r["place_name"],
+#                 "partner_name": r["from_name"],
+#                 "partner_tg": r["from_tg"],
+#                 "role": "responder"
+#             }
+
+#             # вставляем в таблицу notifications (инициатор)
+#             await db.execute(
+#                 "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+#                 (r["from_user_id"], "survey", json.dumps(payload_from, ensure_ascii=False))
+#             )
+#             # для респондента
+#             await db.execute(
+#                 "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+#                 (r["to_user_id"], "survey", json.dumps(payload_to, ensure_ascii=False))
+#             )
+#             await db.commit()
+
+#             partner_from_name = r["from_name"] or r["from_tg"] or "партнёр"
+#             partner_to_name = r["to_name"] or r["to_tg"] or "партнёр"
+#             meal = (r["meal_type"] or "встречу").strip()
+#             place = r["place_name"] or ""
+#             place_part = f' в "{place}"' if place else ""
+
+#             # формируем строки для отправки каждому участнику
+#             text_for_from = f'Сходили ли вы с "{partner_to_name}" {meal}{place_part}?'
+#             text_for_to   = f'Сходили ли вы с "{partner_from_name}" {meal}{place_part}?'
+
+#             # попытка пометить и отправить
+#             try:
+#                 if r.get("from_tg"):
+#                     await send_telegram_message(r["from_tg"], text_for_from)
+#                 if r.get("to_tg"):
+#                     await send_telegram_message(r["to_tg"], text_for_to)
+#             except Exception:
+#                 logging.exception("survey send telegram failed for invite %s", invite_id)
+
+#         await db.commit()
+
+
+
+# --- заменить функцию dispatch_surveys_once в app/telegram_utils.py ---
 async def dispatch_surveys_once():
-    """Ищет accepted invites с ответом >=1 час назад и survey_sent=0, создает notifications и отправляет telegram."""
+    """Ищет accepted invites с ответом >=10 секунд назад и survey_sent=0, создает notifications и отправляет telegram."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        
-        # выбираем все приглашения, принятые >= 1 час назад и для которых опрос ещё не отправлен
+
         cur = await db.execute("""
-            SELECT i.id, i.from_user_id, i.to_user_id, i.place_name, i.responded_at,
-                fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
+            SELECT i.id, i.from_user_id, i.to_user_id, i.place_name, i.responded_at, i.meal_type,
+                   fu.tg_id AS from_tg, tu.tg_id AS to_tg, fu.name AS from_name, tu.name AS to_name
             FROM invites i
             JOIN users fu ON fu.id = i.from_user_id
             JOIN users tu ON tu.id = i.to_user_id
             WHERE i.status = 'accepted' AND IFNULL(i.survey_sent,0) = 0
-                AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-10 seconds')
+              AND strftime('%s', replace(replace(i.responded_at,'T',' '),'Z','')) <= strftime('%s', 'now', '-10 seconds')
         """)
-            #   AND datetime(i.responded_at) <= datetime('now', '-1 hour')
         rows = await cur.fetchall()
         if not rows:
             return
 
-        for r in rows:
-            invite_id = r["id"]
+        for row in rows:
+            r = dict(row)  # безопасный словарь
+            invite_id = r.get("id")
 
-            # пытаемся пометить invite как отправленный (только если ещё не помечен)
-            await db.execute("UPDATE invites SET survey_sent = 1 WHERE id = ? AND IFNULL(survey_sent,0) = 0", (invite_id,))
-            await db.commit()
-            cur_changes = await db.execute("SELECT changes() AS cnt")
-            ch = await cur_changes.fetchone()
-            if not ch or int(ch["cnt"]) == 0:
+            # попытка пометить invite как отправленный (race-safe)
+            try:
+                await db.execute("UPDATE invites SET survey_sent = 1 WHERE id = ? AND IFNULL(survey_sent,0) = 0", (invite_id,))
+                await db.commit()
+                cur_changes = await db.execute("SELECT changes() AS cnt")
+                ch = await cur_changes.fetchone()
+                if not ch or int(ch["cnt"]) == 0:
+                    # кто-то другой уже пометил — пропускаем
+                    continue
+            except Exception:
+                logging.exception("failed to mark survey_sent for invite %s", invite_id)
                 continue
 
             # payload для уведомления в мини-аппе
-            # отправим каждому участнику персонализованный payload
-            # payload_from => инициатор (отправителю оповещения о том, что нужно ответить)
             payload_from = {
                 "invite_id": invite_id,
-                "place_name": r["place_name"],
-                "partner_name": r["to_name"],
-                "partner_tg": r["to_tg"],
+                "place_name": r.get("place_name"),
+                "partner_name": r.get("to_name"),
+                "partner_tg": r.get("to_tg"),
                 "role": "initiator"
             }
             payload_to = {
                 "invite_id": invite_id,
-                "place_name": r["place_name"],
-                "partner_name": r["from_name"],
-                "partner_tg": r["from_tg"],
+                "place_name": r.get("place_name"),
+                "partner_name": r.get("from_name"),
+                "partner_tg": r.get("from_tg"),
                 "role": "responder"
             }
 
-            # вставляем в таблицу notifications (инициатор)
-            await db.execute(
-                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
-                (r["from_user_id"], "survey", json.dumps(payload_from, ensure_ascii=False))
-            )
-            # для респондента
-            await db.execute(
-                "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
-                (r["to_user_id"], "survey", json.dumps(payload_to, ensure_ascii=False))
-            )
-            await db.commit()
+            # формируем дружелюбные тексты с запасными значениями
+            place = r.get("place_name") or ""
+            place_text = f' в "{place}"' if place else ""
+            meal_type = (r.get("meal_type") or "встречу").strip()
+            from_display = r.get("from_name") or (("@%s" % r.get("from_tg")) if r.get("from_tg") else "пользователь")
+            to_display = r.get("to_name") or (("@%s" % r.get("to_tg")) if r.get("to_tg") else "пользователь")
 
-            partner_from_name = r["from_name"] or r["from_tg"] or "партнёр"
-            partner_to_name = r["to_name"] or r["to_tg"] or "партнёр"
-            meal = (r["meal_type"] or "встречу").strip()
-            place = r["place_name"] or ""
-            place_part = f' в "{place}"' if place else ""
+            text_for_from = f'Сходили ли вы с "{to_display}" {meal_type}{place_text}?'
+            text_for_to   = f'Сходили ли вы с "{from_display}" {meal_type}{place_text}?'
 
-            # формируем строки для отправки каждому участнику
-            text_for_from = f'Сходили ли вы с "{partner_to_name}" {meal}{place_part}?'
-            text_for_to   = f'Сходили ли вы с "{partner_from_name}" {meal}{place_part}?'
+            # вставляем notifications в БД (initiator и responder)
+            try:
+                await db.execute(
+                    "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                    (r.get("from_user_id"), "survey", json.dumps(payload_from, ensure_ascii=False))
+                )
+                await db.execute(
+                    "INSERT INTO notifications (user_id, type, payload, read, created_at) VALUES (?, ?, ?, 0, datetime('now'))",
+                    (r.get("to_user_id"), "survey", json.dumps(payload_to, ensure_ascii=False))
+                )
+                await db.commit()
+            except Exception:
+                logging.exception("failed to insert notifications for invite %s", invite_id)
 
-            # попытка пометить и отправить
+            # best-effort: отправляем telegram (текст тем, кто должен ответить)
             try:
                 if r.get("from_tg"):
-                    await send_telegram_message(r["from_tg"], text_for_from)
+                    await send_telegram_message(r.get("from_tg"), text_for_from)
                 if r.get("to_tg"):
-                    await send_telegram_message(r["to_tg"], text_for_to)
+                    await send_telegram_message(r.get("to_tg"), text_for_to)
             except Exception:
                 logging.exception("survey send telegram failed for invite %s", invite_id)
 
-        await db.commit()
+    # end
