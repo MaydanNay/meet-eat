@@ -181,10 +181,10 @@ async def dispatch_surveys_once():
             )
             await db.commit()
 
-            partner_from_name = r.get("from_name") or r.get("from_tg") or "партнёр"
-            partner_to_name = r.get("to_name") or r.get("to_tg") or "партнёр"
-            meal = (r.get("meal_type") or "встречу").strip()
-            place = r.get("place_name") or ""
+            partner_from_name = r["from_name"] or r["from_tg"] or "партнёр"
+            partner_to_name = r["to_name"] or r["to_tg"] or "партнёр"
+            meal = (r["meal_type"] or "встречу").strip()
+            place = r["place_name"] or ""
             place_part = f' в "{place}"' if place else ""
 
             # формируем строки для отправки каждому участнику
