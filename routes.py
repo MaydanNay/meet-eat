@@ -213,7 +213,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 DB_PATH = "db.sqlite3"
 import hashlib, hmac
-BOT_TOKEN = "7642738760:AAEZ-8IwR1wNbxvbQyjuo4mTNKGYgJAXy5E"
+BOT_TOKEN = "8430676291:AAFr9yilHXr2Fel35y297btCjln6N6cR7l8"
 secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
 
 
