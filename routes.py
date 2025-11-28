@@ -155,16 +155,20 @@ async def survey_dispatcher_loop(
     poll_interval=2
     # poll_interval=60
 ):
-    await asyncio.sleep(5)
-    while True:
-        try:
-            await dispatch_surveys_once()
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            logging.exception("survey_dispatcher_loop failed")
-        await asyncio.sleep(poll_interval)
-
+    try:
+        await asyncio.sleep(5)
+        while True:
+            try:
+                await dispatch_surveys_once()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logging.exception("survey_dispatcher_loop failed")
+            await asyncio.sleep(poll_interval)
+    except asyncio.CancelledError:
+        logging.info("survey_dispatcher_loop cancelled, cleaning up")
+        raise 
+    
 # функция для прикрепления воркера к FastAPI app (вызвать из main)
 def attach_survey_worker(app):
     @app.on_event("startup")
